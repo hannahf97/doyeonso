@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # 페이지 임포트
-from pages import home, file_upload, file_list, chat_bot, help, database_admin
+from pages import file_upload, file_list, database_view
 
 def main():
     st.set_page_config(
@@ -21,25 +21,19 @@ def main():
     with st.sidebar:
         selected = option_menu(
             menu_title="Doyeonso",
-            options=["홈", "파일 업로드", "파일 목록", "챗봇", "도움말", "데이터베이스 관리"],
-            icons=["house", "upload", "list", "chat", "question", "database"],
+            options=["파일 업로드", "파일 목록", "데이터베이스 조회"],
+            icons=["upload", "list", "table"],
             menu_icon="bear",
             default_index=0,
         )
     
     # 페이지 라우팅
-    if selected == "홈":
-        home.show()
-    elif selected == "파일 업로드":
+    if selected == "파일 업로드":
         file_upload.show()
     elif selected == "파일 목록":
         file_list.show()
-    elif selected == "챗봇":
-        chat_bot.show()
-    elif selected == "도움말":
-        help.show()
-    elif selected == "데이터베이스 관리":
-        database_admin.show()
+    elif selected == "데이터베이스 조회":
+        database_view.show()
 
 if __name__ == "__main__":
     main() 

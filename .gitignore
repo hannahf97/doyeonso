@@ -25,6 +25,7 @@ MANIFEST
 .env
 .env.local
 .env.production
+.env.development
 
 # Virtual environment
 venv/
@@ -48,9 +49,14 @@ ENV/
 ehthumbs.db
 Thumbs.db
 
-# Uploads and data directories
-uploads/
+# Data directories  
 data/
+
+# Uploads - keep only detection_results
+uploads/uploaded_images/
+uploads/ocr_results/
+uploads/merged_results/
+!uploads/detection_results/
 
 # Logs
 *.log
@@ -58,4 +64,15 @@ logs/
 
 # Temporary files
 *.tmp
-*.temp 
+*.temp
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker
+docker-compose.override.yml
+
+# Nested git repositories
+doyeonso/ 

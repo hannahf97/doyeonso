@@ -1,0 +1,42 @@
+{
+  "label": "detecting",
+  "version": "1.0",
+  "timestamp": "2025-06-11T02:11:17.002124",
+  "model_info": {
+    "name": "stream_dose_detect",
+    "version": "1.0",
+    "confidence_threshold": 0.5
+  },
+  "image_info": {
+    "width": 1684,
+    "height": 1190,
+    "format": "PNG"
+  },
+  "detections": [
+    {
+      "class": "text_region",
+      "confidence": 0.95,
+      "bbox": {
+        "x": 100,
+        "y": 100,
+        "width": 200,
+        "height": 50
+      }
+    },
+    {
+      "class": "table",
+      "confidence": 0.87,
+      "bbox": {
+        "x": 300,
+        "y": 200,
+        "width": 400,
+        "height": 300
+      }
+    }
+  ],
+  "processing_info": {
+    "total_detections": 2,
+    "processing_time_ms": 1250,
+    "status": "completed"
+  }
+} 
