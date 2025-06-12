@@ -257,20 +257,28 @@ def extract_preview_info(json_data):
     if json_data:
         try:
             # OCR 필드 개수 계산
-            if 'ocr_data' in json_data and json_data['ocr_data']:
+            if 'ocr' in json_data and json_data['ocr']:
+                ocr_data = json_data['ocr']
+                if 'images' in ocr_data:
+                    for image in ocr_data['images']:
+                        if 'fields' in image:
+                            ocr_count += len(image['fields'])
+            elif 'ocr_data' in json_data and json_data['ocr_data']:
                 ocr_data = json_data['ocr_data']
                 if 'images' in ocr_data:
                     for image in ocr_data['images']:
                         if 'fields' in image:
                             ocr_count += len(image['fields'])
             
-            # Detection 객체 개수 계산 (detection_data 또는 data에서)
-            if 'detection_data' in json_data and json_data['detection_data']:
+            # Detection 객체 개수 계산
+            if 'detecting' in json_data and json_data['detecting']:
+                detection_data = json_data['detecting']
+                if 'data' in detection_data and 'boxes' in detection_data['data']:
+                    detection_count = len(detection_data['data']['boxes'])
+            elif 'detection_data' in json_data and json_data['detection_data']:
                 detection_data = json_data['detection_data']
                 if 'detections' in detection_data:
                     detection_count = len(detection_data['detections'])
-            elif 'data' in json_data and 'boxes' in json_data['data']:
-                detection_count = len(json_data['data']['boxes'])
             
             total_objects = ocr_count + detection_count
             
@@ -457,7 +465,6 @@ def display_detection_data(detection_data):
         
         for i, detection in enumerate(detections):
             label = detection.get('label', detection.get('id', f'객체 {i+1}'))
-            confidence = detection.get('confidence', 0)
             
             # 위치 정보
             if 'boundingBox' in detection:
@@ -468,10 +475,7 @@ def display_detection_data(detection_data):
             else:
                 pos_info = "위치 정보 없음"
             
-            if confidence > 0:
-                st.write(f"• {label} (신뢰도: {confidence:.3f}, {pos_info})")
-            else:
-                st.write(f"• {label} ({pos_info})")
+            st.write(f"• {label} ({pos_info})")
 
 def delete_file(file_id):
     """파일 삭제"""

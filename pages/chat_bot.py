@@ -536,11 +536,19 @@ def get_file_details(conn, file_id):
 
 def count_ocr_fields(json_data):
     """JSON 데이터에서 OCR 필드 개수 계산"""
-    print('json_data', json_data)
     try:
+        # 새로운 구조 ('ocr')
         if 'ocr' in json_data and json_data['ocr']:
-            print('ocr')
             ocr_data = json_data['ocr']
+            if isinstance(ocr_data, dict) and 'images' in ocr_data:
+                total_fields = 0
+                for img in ocr_data['images']:
+                    if 'fields' in img:
+                        total_fields += len(img['fields'])
+                return total_fields
+        # 이전 구조 ('ocr_data')
+        elif 'ocr_data' in json_data and json_data['ocr_data']:
+            ocr_data = json_data['ocr_data']
             if isinstance(ocr_data, dict) and 'images' in ocr_data:
                 total_fields = 0
                 for img in ocr_data['images']:
@@ -552,14 +560,20 @@ def count_ocr_fields(json_data):
         return 0
 
 def count_detection_objects(json_data):
-    print('json_data', json_data)
     """JSON 데이터에서 Detection 객체 개수 계산"""
     try:
+        # 새로운 구조 ('detecting')
         if 'detecting' in json_data and json_data['detecting']:
-            print('detecting')
             detection_data = json_data['detecting']
-            if isinstance(detection_data, dict) and 'data' in detection_data:
-                return len(detection_data['data'])
+            if isinstance(detection_data, dict) and 'data' in detection_data and 'boxes' in detection_data['data']:
+                boxes = detection_data['data']['boxes']
+                return len([box for box in boxes if isinstance(box, dict) and 'label' in box])
+        # 이전 구조 ('detection_data')
+        elif 'detection_data' in json_data and json_data['detection_data']:
+            detection_data = json_data['detection_data']
+            if isinstance(detection_data, dict) and 'detections' in detection_data:
+                detections = detection_data['detections']
+                return len([det for det in detections if isinstance(det, dict) and 'label' in det])
         return 0
     except:
         return 0
@@ -571,19 +585,29 @@ def extract_ocr_text_preview(json_data):
             return ""
         
         data = json_data if isinstance(json_data, dict) else json.loads(json_data)
+        texts = []
         
+        # 새로운 구조 ('ocr')
         if 'ocr' in data and data['ocr']:
             ocr_data = data['ocr']
             if isinstance(ocr_data, dict) and 'images' in ocr_data:
-                texts = []
                 for img in ocr_data['images']:
                     if 'fields' in img:
                         for field in img['fields']:
                             if 'inferText' in field and field['inferText']:
                                 texts.append(field['inferText'])
-                
-                return " | ".join(texts)
-        return ""
+        
+        # 이전 구조 ('ocr_data')
+        elif 'ocr_data' in data and data['ocr_data']:
+            ocr_data = data['ocr_data']
+            if isinstance(ocr_data, dict) and 'images' in ocr_data:
+                for img in ocr_data['images']:
+                    if 'fields' in img:
+                        for field in img['fields']:
+                            if 'inferText' in field and field['inferText']:
+                                texts.append(field['inferText'])
+        
+        return " | ".join(texts)
     except:
         return ""
 

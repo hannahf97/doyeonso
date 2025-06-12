@@ -695,7 +695,6 @@ class PIDExpertChatbot:
                             selected_files_context += f"- 🎯 **객체 탐지 결과** (P&ID 기호, 계측기기, 밸브, 배관 등 {len(detection_info)}개):\n"
                             for j, obj in enumerate(detection_info):
                                 label = obj.get('label', obj.get('id', f'객체{j+1}'))
-                                confidence = obj.get('confidence', 0)
                                 
                                 # 위치 정보 추출
                                 if 'boundingBox' in obj:
@@ -706,19 +705,16 @@ class PIDExpertChatbot:
                                 else:
                                     pos = "위치정보없음"
                                 
-                                if confidence > 0:
-                                    selected_files_context += f"  {j+1}. 🔧 {label} (탐지신뢰도: {confidence:.3f}, 도면좌표: {pos})\n"
-                                else:
-                                    selected_files_context += f"  {j+1}. 🔧 {label} (도면좌표: {pos})\n"
+                                selected_files_context += f"  {j+1}. 🔧 {label} (도면좌표: {pos})\n"
                             selected_files_context += "\n"
                         
                         # JSON 원시 데이터 구조 정보 추가
                         selected_files_context += f"- 📊 **AI 탐지 데이터 구조:**\n"
                         if isinstance(json_data, dict):
                             for key in json_data.keys():
-                                if key == 'ocr_data' or key == 'ocr':
+                                if key == 'ocr' or key == 'ocr_data':
                                     selected_files_context += f"  • {key} (문자 인식 데이터)\n"
-                                elif key == 'detection_data' or key == 'detecting' or key == 'data':
+                                elif key == 'detecting' or key == 'detection_data':
                                     selected_files_context += f"  • {key} (기호/객체 탐지 데이터)\n"
                                 else:
                                     selected_files_context += f"  • {key}\n"
@@ -2356,7 +2352,17 @@ class PIDExpertChatbot:
         ocr_texts = []
         
         try:
-            if 'ocr_data' in json_data and json_data['ocr_data']:
+            # 새로운 구조 ('ocr')
+            if 'ocr' in json_data and json_data['ocr']:
+                ocr_data = json_data['ocr']
+                if 'images' in ocr_data:
+                    for image in ocr_data['images']:
+                        if 'fields' in image:
+                            for field in image['fields']:
+                                if 'inferText' in field and field['inferText']:
+                                    ocr_texts.append(field['inferText'])
+            # 이전 구조 ('ocr_data')
+            elif 'ocr_data' in json_data and json_data['ocr_data']:
                 ocr_data = json_data['ocr_data']
                 if 'images' in ocr_data:
                     for image in ocr_data['images']:
@@ -2374,15 +2380,17 @@ class PIDExpertChatbot:
         detection_info = []
         
         try:
-            # detection_data에서 추출
-            if 'detection_data' in json_data and json_data['detecting']:
+            # 새로운 구조 ('detecting')
+            if 'detecting' in json_data and json_data['detecting']:
                 detection_data = json_data['detecting']
-                if 'detections' in detection_data:
-                    detection_info.extend(detection_data['detecting'])
+                if 'data' in detection_data and 'boxes' in detection_data['data']:
+                    detection_info.extend(detection_data['data']['boxes'])
             
-            # data.boxes에서 추출 (다른 형식)
-            elif 'data' in json_data and json_data['data'] and 'boxes' in json_data['data']:
-                detection_info.extend(json_data['data']['boxes'])
+            # 이전 구조 ('detection_data')
+            elif 'detection_data' in json_data and json_data['detection_data']:
+                detection_data = json_data['detection_data']
+                if 'detections' in detection_data:
+                    detection_info.extend(detection_data['detections'])
                 
         except Exception as e:
             logger.error(f"Detection 정보 추출 실패: {e}")
