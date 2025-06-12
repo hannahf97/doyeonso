@@ -53,9 +53,7 @@ Thumbs.db
 data/
 
 # Uploads - keep only detection_results
-uploads/uploaded_images/
-uploads/ocr_results/
-uploads/merged_results/
+
 !uploads/detection_results/
 
 # Logs

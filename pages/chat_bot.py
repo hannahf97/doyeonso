@@ -957,10 +957,49 @@ def _display_visualization(visualization_data):
             # 상세 정보 - expander 대신 일반 컨테이너 사용
             st.markdown("### 📋 상세 분석 정보")
             
-            resized_size = visualization_data.get('resized_size', (0, 0))
-            st.write(f"**원본 크기:** {original_size[0]} × {original_size[1]}")
+            # JSON 데이터에서 이미지 크기 정보 가져오기
+            json_data = visualization_data.get('json_data', {})
+            image_size = json_data.get('image_size', {})
+            width = image_size.get('width', 0)
+            height = image_size.get('height', 0)
+            
+            st.write(f"**원본 크기:** {width} × {height}")
             st.write(f"**분석 크기:** {resized_size[0]} × {resized_size[1]}")
-            st.write(f"**분석 요약:** {visualization_data.get('analysis_summary', 'N/A')}")
+            
+            # OCR과 Detection 미리보기 표시
+            st.markdown("### 📝 데이터 미리보기")
+            
+            # OCR 미리보기
+            ocr_preview = visualization_data.get('ocr_preview', '')
+            if ocr_preview:
+                st.markdown("#### 🔵 OCR 텍스트")
+                st.text_area("OCR 텍스트 미리보기", 
+                           value=ocr_preview[:200] + "..." if len(ocr_preview) > 200 else ocr_preview,
+                           height=100, disabled=True, key="ocr_preview", label_visibility="collapsed")
+            
+            # Detection 미리보기
+            detection_preview = visualization_data.get('detection_preview', '')
+            if detection_preview:
+                st.markdown("#### 🔴 Detection 객체")
+                st.text_area("Detection 객체 미리보기",
+                           value=detection_preview[:200] + "..." if len(detection_preview) > 200 else detection_preview,
+                           height=100, disabled=True, key="detection_preview", label_visibility="collapsed")
+            
+            # 분석 요약 정보를 보기 좋게 표시
+            analysis_summary = visualization_data.get('analysis_summary', {})
+            if isinstance(analysis_summary, dict):
+                st.markdown("#### 📊 분석 통계")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("총 객체 수", analysis_summary.get('total_objects', 0))
+                    if 'image_size' in analysis_summary:
+                        st.write(f"**이미지 크기:** {analysis_summary['image_size'].get('width', 0)} × {analysis_summary['image_size'].get('height', 0)}")
+                with col2:
+                    st.metric("OCR 텍스트 수", analysis_summary.get('ocr_text_count', 0))
+                    if 'detected_objects' in analysis_summary:
+                        st.write(f"**감지된 객체:** {len(analysis_summary['detected_objects'])}개")
+            else:
+                st.write(f"**분석 요약:** {analysis_summary}")
             
             # 도면 데이터 정보
             drawing_data = visualization_data.get('drawing_data', {})
