@@ -287,8 +287,7 @@ def save_to_database(integrated_data: Dict, image_path: str, original_filename: 
     result = {
         'success': False,
         'db_id': None,
-        'error_message': None,
-        'is_update': False
+        'error_message': None
     }
     
     try:
@@ -299,51 +298,24 @@ def save_to_database(integrated_data: Dict, image_path: str, original_filename: 
         
         cursor = conn.cursor()
         
-        # 데이터베이스에 저장할 때는 확장자와 뒤의 숫자들을 제거한 파일명 사용
+        # 데이터베이스에 저장할 때는 확장자만 제거하고 원본 파일명 그대로 사용
         base_filename = os.path.splitext(original_filename)[0]
-        # 파일명 뒤의 _숫자, 숫자 패턴 제거 (예: stream_dose_ai_1 -> stream_dose_ai, 도면예시1 -> 도면예시)
-        base_filename = clean_filename(base_filename)
         
-        # 기존 레코드 확인
-        check_query = """
-        SELECT d_id FROM domyun WHERE d_name = %s AND "user" = %s;
+        # 항상 새 레코드 삽입 (d_id가 고유하므로 모든 파일을 별도 레코드로 관리)
+        insert_query = """
+        INSERT INTO domyun (d_name, "user", create_date, json_data, image_path)
+        VALUES (%s, %s, %s, %s, %s)
+        RETURNING d_id;
         """
-        cursor.execute(check_query, (base_filename, USER_NAME))
-        existing_record = cursor.fetchone()
-        
-        if existing_record:
-            # 기존 레코드 업데이트
-            update_query = """
-            UPDATE domyun 
-            SET create_date = %s, json_data = %s, image_path = %s
-            WHERE d_id = %s
-            RETURNING d_id;
-            """
-            cursor.execute(update_query, (
-                datetime.now(),
-                json.dumps(integrated_data, ensure_ascii=False),
-                image_path,
-                existing_record[0]
-            ))
-            db_id = cursor.fetchone()[0]
-            result['is_update'] = True
-            print(f"🔄 기존 데이터베이스 레코드 업데이트: ID {db_id}")
-        else:
-            # 새 레코드 삽입
-            insert_query = """
-            INSERT INTO domyun (d_name, "user", create_date, json_data, image_path)
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING d_id;
-            """
-            cursor.execute(insert_query, (
-                base_filename,
-                USER_NAME,
-                datetime.now(),
-                json.dumps(integrated_data, ensure_ascii=False),
-                image_path
-            ))
-            db_id = cursor.fetchone()[0]
-            print(f"✅ 새 데이터베이스 레코드 생성: ID {db_id}")
+        cursor.execute(insert_query, (
+            base_filename,
+            USER_NAME,
+            datetime.now(),
+            json.dumps(integrated_data, ensure_ascii=False),
+            image_path
+        ))
+        db_id = cursor.fetchone()[0]
+        print(f"✅ 새 데이터베이스 레코드 생성: ID {db_id}")
         
         conn.commit()
         cursor.close()

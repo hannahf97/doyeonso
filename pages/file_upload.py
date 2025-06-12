@@ -254,21 +254,15 @@ def show():
         help="PDF and Images formats • 최대 10MB"
     )
     
+    # 파일 처리 상태 초기화
+    files_processed = False
+    
     # 업로드된 파일이 있을 때 처리
     if uploaded_files:
-        # 세션 상태에서 처리된 파일 추적
-        if 'processed_files' not in st.session_state:
-            st.session_state.processed_files = set()
-        
-
-        
         # 파일 처리 로직 (백그라운드에서 실행)
-        files_processed = False
         for i, uploaded_file in enumerate(uploaded_files):
-            # 이미 처리된 파일인지 확인 (파일명 + 크기로 식별)
-            file_id = f"{uploaded_file.name}_{uploaded_file.size}"
-            if file_id in st.session_state.processed_files:
-                continue
+            # 동일한 파일명이어도 항상 새로 처리하도록 변경
+            # (중복 파일 처리 방지 로직 제거)
             
             # 파일 검증
             if not is_allowed_file(uploaded_file.name):
@@ -288,11 +282,10 @@ def show():
                     uploaded_file.name
                 )
                 
-                # 성공 시 처리 완료 파일 목록에 추가
+                # 처리 결과 확인
                 if workflow_result['success']:
-                    st.session_state.processed_files.add(file_id)
                     files_processed = True
-                    # 성공 메시지 제거
+                    st.success(f"✅ {uploaded_file.name} 처리 완료!")
                 else:
                     st.error(f"❌ {uploaded_file.name} 처리 실패: {workflow_result.get('error_message', '알 수 없는 오류')}")
         
@@ -323,7 +316,7 @@ def show():
     
     # 데이터베이스에서 데이터 조회 (파일 업로드 후 또는 페이지 로드 시)
     # 파일이 새로 처리되었다면 캐시를 강제로 새로고침
-    cache_key = len(st.session_state.get('processed_files', set()))
+    cache_key = int(time.time()) if files_processed else 0
     domyun_files, analysis_result = get_cached_domyun_data(cache_key)
     
     # 파일 리스트와 분석된 데이터 표시
