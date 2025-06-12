@@ -1,8 +1,124 @@
-psycopg2-binary==2.9.9
+# 핵심 웹 프레임워크
 streamlit==1.28.1
 streamlit-option-menu==0.3.6
+
+# 데이터베이스
+psycopg2-binary==2.9.9
+
+# 데이터 처리 및 분석
 pandas==2.1.3
+numpy==1.26.4
+
+# 이미지 처리
 pillow==10.1.0
 pdf2image==1.16.3
+opencv-contrib-python==4.10.0.84
+
+# 웹 요청
 requests==2.31.0
-python-dotenv==1.0.0 
+
+# 환경 변수
+python-dotenv==1.0.0
+
+# AI/ML 라이브러리
+openai==1.55.3
+torch==2.7.1
+torchvision==0.22.1
+sentence-transformers==2.3.1
+transformers==4.52.4
+faiss-cpu==1.8.0.post1
+
+# 한국어 형태소 분석
+kiwipiepy==0.21.0
+kiwipiepy_model==0.21.0
+
+# 로깅
+loguru==0.7.2
+
+# 시각화
+matplotlib==3.9.2
+seaborn==0.13.2
+plotly==6.1.2
+
+# 과학 계산
+scipy==1.15.3
+scikit-learn==1.4.0
+
+# PDF 처리
+PyPDF2==3.0.1
+pdfminer.six==20231228
+pdfplumber==0.11.4
+
+# 날짜/시간 처리
+python-dateutil==2.9.0.post0
+
+# 텍스트 처리
+nltk==3.9.1
+regex==2024.11.6
+
+# 웹 개발 (FastAPI/Gradio 등)
+fastapi==0.112.1
+gradio==4.44.0
+uvicorn==0.30.6
+
+# 유틸리티
+tqdm==4.66.5
+click==8.1.7
+rich==13.7.1
+toml==0.10.2
+
+# 데이터 검증
+pydantic==2.8.2
+
+# 암호화/보안
+cryptography==45.0.3
+
+# 마크다운 처리
+markdown-it-py==3.0.0
+
+# JSON 스키마
+jsonschema==4.24.0
+
+# HTTP 클라이언트
+httpx==0.27.2
+
+# 패키징/배포
+setuptools==80.9.0
+packaging==23.2
+
+# 캐싱
+cachetools==5.5.2
+
+# Git 통합
+GitPython==3.1.44
+
+# 시간대 처리
+pytz==2024.1
+tzlocal==5.3.1
+
+# 파일 처리
+aiofiles==23.2.1
+
+# 웹소켓
+websockets==12.0
+
+# 검증기
+validators==0.35.0
+
+# Azure 인지 서비스 (OCR용)
+azure-cognitiveservices-vision-computervision==0.9.0
+azure-common==1.1.28
+azure-core==1.34.0
+
+# 오디오 처리
+pydub==0.25.1
+
+# 벡터 데이터베이스
+pgvector==0.4.1
+
+# 기타 유틸리티
+six==1.16.0
+certifi==2025.4.26
+charset-normalizer==3.3.2
+idna==3.7
+urllib3==2.2.2 
