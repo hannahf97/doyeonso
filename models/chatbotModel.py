@@ -6,6 +6,7 @@ P&ID 전문가 챗봇 모델 - Streamlit 연동용
 import os
 import pickle
 import torch
+import json
 from sentence_transformers import SentenceTransformer
 from utils.rag_system_kiwi import RAGSystemWithKiwi
 from openai import OpenAI
@@ -13,6 +14,7 @@ from loguru import logger
 from typing import List, Dict, Optional
 from datetime import datetime
 from dotenv import load_dotenv
+from config.database_config import get_db_connection
 
 # .env 파일 로드
 load_dotenv()
@@ -198,7 +200,14 @@ class PIDExpertChatbot:
         return system_prompt
 
     def _detect_query_type(self, query: str) -> str:
-        """쿼리 유형 감지 - 변경 분석 강화"""
+        """쿼리 유형 감지 - 변경 분석 강화 및 내부 데이터 분류 추가"""
+        
+        # 내부/기밀 데이터 관련 키워드 (웹 검색 금지)
+        internal_keywords = [
+            '공정', '시스템', '요약', '분석', '도면', '설계', '운전', '제어',
+            '프로세스', '설비',
+            '절차', '매뉴얼', '사양', '규격'
+        ]
         
         # 변경/비교 관련 키워드 (더 정확한 감지)
         change_keywords = [
@@ -224,7 +233,11 @@ class PIDExpertChatbot:
         
         query_lower = query.lower()
         
-        # 변경/비교 키워드 우선 확인
+        # 내부 데이터 키워드 우선 확인 (웹 검색 금지)
+        if any(keyword in query for keyword in internal_keywords):
+            return "internal_data"
+        
+        # 변경/비교 키워드 확인
         if any(keyword in query for keyword in change_keywords):
             return "change_analysis"
         
@@ -243,7 +256,7 @@ class PIDExpertChatbot:
             return "general"
 
     def create_change_analysis_prompt(self, user_question, rag_context):
-        """변경 분석 전용 프롬프트 생성"""
+        """변경 분석 전용 프롬프트 생성 - 데이터베이스 도면 데이터 포함"""
         
         change_expert_persona = """당신은 20년 경력의 P&ID 변경 관리 전문가입니다.
 
@@ -267,10 +280,103 @@ class PIDExpertChatbot:
 4. **운전 및 유지보수 영향** (실무적 고려사항)
 5. **권장사항 및 주의사항** (추가 검토 필요 사항)"""
 
+        # 사용자 질문에서 파일명 추출 시도
+        drawing_context = ""
+        
+        try:
+            # 질문에서 파일명 패턴 찾기
+            import re
+            
+            # 파일명 패턴들 (확장자 포함)
+            file_patterns = [
+                r'([a-zA-Z0-9가-힣_\-\.]+\.(?:pdf|png|jpg|jpeg))',  # 확장자 포함
+                r'([a-zA-Z0-9가-힣_\-\.]+)\s*(?:파일|도면|문서)',    # 파일/도면/문서 키워드
+                r'"([^"]+)"',  # 따옴표로 감싼 파일명
+                r"'([^']+)'"   # 작은따옴표로 감싼 파일명
+            ]
+            
+            detected_filename = None
+            for pattern in file_patterns:
+                matches = re.findall(pattern, user_question, re.IGNORECASE)
+                if matches:
+                    detected_filename = matches[0]
+                    break
+            
+            if detected_filename:
+                logger.info(f"질문에서 파일명 감지: {detected_filename}")
+                
+                # 변경 관련 키워드 확인
+                change_keywords = ['변경', '수정', '개선', '교체', '업그레이드', '조정', '비교', '차이', '전후']
+                version_keywords = {
+                    'latest': ['최신', '새로운', '현재', '업데이트된', '신규'],
+                    'previous': ['이전', '과거', '원래', '기존', '옛날']
+                }
+                
+                is_change_analysis = any(keyword in user_question for keyword in change_keywords)
+                
+                if is_change_analysis:
+                    # 최신 버전과 이전 버전 모두 조회
+                    latest_data = self.get_drawing_data_from_db(detected_filename, "latest")
+                    previous_data = self.get_drawing_data_from_db(detected_filename, "previous")
+                    
+                    if latest_data or previous_data:
+                        drawing_context = "\n\n=== 데이터베이스에서 조회된 도면 정보 ===\n"
+                        
+                        if latest_data:
+                            drawing_context += self.build_drawing_context(latest_data, "최신")
+                            drawing_context += "\n\n"
+                        
+                        if previous_data:
+                            drawing_context += self.build_drawing_context(previous_data, "이전")
+                            drawing_context += "\n\n"
+                        
+                        # 비교 분석을 위한 추가 정보
+                        if latest_data and previous_data:
+                            drawing_context += "=== 버전 비교 정보 ===\n"
+                            drawing_context += f"최신 버전 등록일: {latest_data.get('create_date')}\n"
+                            drawing_context += f"이전 버전 등록일: {previous_data.get('create_date')}\n"
+                            
+                            # 텍스트 변경 분석
+                            latest_text = self.extract_text_from_drawing_data(latest_data)
+                            previous_text = self.extract_text_from_drawing_data(previous_data)
+                            
+                            if latest_text != previous_text:
+                                drawing_context += "⚠️ 도면 텍스트 내용에 변경사항이 감지되었습니다.\n"
+                            else:
+                                drawing_context += "ℹ️ 도면 텍스트 내용에는 변경사항이 없습니다.\n"
+                    else:
+                        drawing_context += f"\n\n⚠️ '{detected_filename}' 파일을 데이터베이스에서 찾을 수 없습니다.\n"
+                
+                else:
+                    # 변경 분석이 아닌 경우 특정 버전 요청 확인
+                    requested_version = "latest"  # 기본값
+                    
+                    for version, keywords in version_keywords.items():
+                        if any(keyword in user_question for keyword in keywords):
+                            requested_version = version
+                            break
+                    
+                    drawing_data = self.get_drawing_data_from_db(detected_filename, requested_version)
+                    
+                    if drawing_data:
+                        version_label = "최신" if requested_version == "latest" else "이전"
+                        drawing_context = "\n\n=== 데이터베이스에서 조회된 도면 정보 ===\n"
+                        drawing_context += self.build_drawing_context(drawing_data, version_label)
+                    else:
+                        drawing_context += f"\n\n⚠️ '{detected_filename}' ({requested_version})을 데이터베이스에서 찾을 수 없습니다.\n"
+            
+        except Exception as e:
+            logger.error(f"데이터베이스 조회 중 오류: {e}")
+            drawing_context = "\n\n⚠️ 데이터베이스 조회 중 오류가 발생했습니다.\n"
+
+        # 전체 프롬프트 구성
         system_prompt = f"""{change_expert_persona}
 
 **참고 문서 정보:**
 {rag_context}
+
+**도면 데이터베이스 정보:**
+{drawing_context}
 
 사용자가 P&ID 변경 또는 비교에 대해 질문했습니다. 변경 관리 전문가로서 다음 사항을 중점적으로 분석해주세요:
 
@@ -279,7 +385,9 @@ class PIDExpertChatbot:
 - 안전성 및 운전성 관점에서의 검토
 - 변경 시 추가 고려해야 할 사항
 
-위 참고 문서를 바탕으로 전문적이고 체계적인 변경 분석을 제공해주세요."""
+위 참고 문서와 데이터베이스에서 조회된 도면 정보를 바탕으로 전문적이고 체계적인 변경 분석을 제공해주세요.
+
+파일명이 감지되었다면 해당 도면의 실제 데이터를 우선적으로 참고하여 답변하세요."""
 
         return system_prompt
 
@@ -319,46 +427,410 @@ class PIDExpertChatbot:
             logger.error(f"변경 분석 검색 실패: {e}")
             return self.retrieve_relevant_chunks(query, top_k)
 
-    def generate_response(self, user_query: str, use_web_search: bool = False) -> Dict:
-        """챗봇 응답 생성 - 변경 분석 분기 처리"""
+    def get_drawing_data_from_db(self, d_name: str, version: str = "latest") -> Optional[Dict]:
+        """
+        데이터베이스에서 도면 데이터를 조회
+        
+        Args:
+            d_name: 도면 파일명
+            version: "latest" (최신) 또는 "previous" (이전)
+        
+        Returns:
+            도면 데이터 또는 None
+        """
+        try:
+            conn = get_db_connection()
+            if not conn:
+                logger.error("데이터베이스 연결 실패")
+                return None
+            
+            cursor = conn.cursor()
+            
+            if version == "latest":
+                # 최신 파일 (create_date가 가장 늦은 것)
+                query = """
+                SELECT d_id, d_name, "user", create_date, json_data, image_path
+                FROM domyun 
+                WHERE d_name = %s 
+                ORDER BY create_date DESC 
+                LIMIT 1
+                """
+            else:  # previous
+                # 이전 파일 (create_date가 두 번째로 늦은 것)
+                query = """
+                SELECT d_id, d_name, "user", create_date, json_data, image_path
+                FROM domyun 
+                WHERE d_name = %s 
+                ORDER BY create_date DESC 
+                LIMIT 1 OFFSET 1
+                """
+            
+            cursor.execute(query, (d_name,))
+            result = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
+            
+            if result:
+                d_id, d_name, user, create_date, json_data, image_path = result
+                return {
+                    'd_id': d_id,
+                    'd_name': d_name,
+                    'user': user,
+                    'create_date': create_date,
+                    'json_data': json_data,
+                    'image_path': image_path
+                }
+            else:
+                logger.warning(f"도면 '{d_name}' ({version})을 찾을 수 없습니다")
+                return None
+                
+        except Exception as e:
+            logger.error(f"데이터베이스 조회 실패: {e}")
+            return None
+
+    def get_all_versions_of_drawing(self, d_name: str) -> List[Dict]:
+        """
+        특정 도면의 모든 버전을 조회
+        
+        Args:
+            d_name: 도면 파일명
+        
+        Returns:
+            모든 버전의 도면 데이터 리스트 (최신순)
+        """
+        try:
+            conn = get_db_connection()
+            if not conn:
+                logger.error("데이터베이스 연결 실패")
+                return []
+            
+            cursor = conn.cursor()
+            
+            query = """
+            SELECT d_id, d_name, "user", create_date, json_data, image_path
+            FROM domyun 
+            WHERE d_name = %s 
+            ORDER BY create_date DESC
+            """
+            
+            cursor.execute(query, (d_name,))
+            results = cursor.fetchall()
+            
+            cursor.close()
+            conn.close()
+            
+            versions = []
+            for result in results:
+                d_id, d_name, user, create_date, json_data, image_path = result
+                versions.append({
+                    'd_id': d_id,
+                    'd_name': d_name,
+                    'user': user,
+                    'create_date': create_date,
+                    'json_data': json_data,
+                    'image_path': image_path
+                })
+            
+            return versions
+                
+        except Exception as e:
+            logger.error(f"데이터베이스 조회 실패: {e}")
+            return []
+
+    def extract_text_from_drawing_data(self, drawing_data: Dict) -> str:
+        """
+        도면 데이터에서 텍스트를 추출
+        
+        Args:
+            drawing_data: 데이터베이스에서 가져온 도면 데이터
+        
+        Returns:
+            추출된 텍스트
+        """
+        if not drawing_data or not drawing_data.get('json_data'):
+            return ""
+        
+        try:
+            json_data = drawing_data['json_data']
+            extracted_texts = []
+            
+            # OCR 데이터에서 텍스트 추출
+            if 'ocr_data' in json_data and json_data['ocr_data']:
+                ocr_data = json_data['ocr_data']
+                if 'images' in ocr_data:
+                    for image in ocr_data['images']:
+                        if 'fields' in image:
+                            for field in image['fields']:
+                                if 'inferText' in field:
+                                    extracted_texts.append(field['inferText'])
+            
+            # Detection 데이터에서 텍스트 추출 (있다면)
+            if 'detection_data' in json_data and json_data['detection_data']:
+                detection_data = json_data['detection_data']
+                if 'detections' in detection_data:
+                    for detection in detection_data['detections']:
+                        if 'text' in detection:
+                            extracted_texts.append(detection['text'])
+            
+            return '\n'.join(extracted_texts)
+            
+        except Exception as e:
+            logger.error(f"텍스트 추출 실패: {e}")
+            return ""
+
+    def build_drawing_context(self, drawing_data: Dict, version_label: str = "") -> str:
+        """
+        도면 데이터를 컨텍스트 문자열로 구성
+        
+        Args:
+            drawing_data: 도면 데이터
+            version_label: 버전 라벨 (예: "최신", "이전")
+        
+        Returns:
+            구성된 컨텍스트 문자열
+        """
+        if not drawing_data:
+            return ""
+        
+        context_parts = []
+        
+        # 도면 기본 정보
+        context_parts.append(f"=== {version_label} 도면 정보 ===")
+        context_parts.append(f"파일명: {drawing_data.get('d_name', 'N/A')}")
+        context_parts.append(f"등록일: {drawing_data.get('create_date', 'N/A')}")
+        context_parts.append(f"등록자: {drawing_data.get('user', 'N/A')}")
+        
+        # 추출된 텍스트
+        extracted_text = self.extract_text_from_drawing_data(drawing_data)
+        if extracted_text:
+            context_parts.append(f"\n--- {version_label} 도면에서 추출된 텍스트 ---")
+            context_parts.append(extracted_text)
+        
+        # JSON 데이터 요약
+        json_data = drawing_data.get('json_data')
+        if json_data:
+            context_parts.append(f"\n--- {version_label} 도면 메타데이터 ---")
+            
+            # 이미지 크기 정보
+            if 'width' in json_data and 'height' in json_data:
+                context_parts.append(f"이미지 크기: {json_data['width']} x {json_data['height']}")
+            
+            # OCR 통계
+            if 'ocr_data' in json_data and json_data['ocr_data']:
+                ocr_data = json_data['ocr_data']
+                if 'images' in ocr_data:
+                    text_count = 0
+                    for image in ocr_data['images']:
+                        if 'fields' in image:
+                            text_count += len(image['fields'])
+                    context_parts.append(f"OCR 추출 텍스트 개수: {text_count}개")
+            
+            # Detection 통계
+            if 'detection_data' in json_data and json_data['detection_data']:
+                detection_data = json_data['detection_data']
+                if 'detections' in detection_data:
+                    detection_count = len(detection_data['detections'])
+                    context_parts.append(f"감지된 객체 개수: {detection_count}개")
+        
+        return '\n'.join(context_parts)
+
+    def generate_response(self, user_query: str, use_web_search: bool = False, selected_drawing: str = None) -> Dict:
+        """챗봇 응답 생성 - 지능적 소스 선택 시스템"""
         try:
             # 쿼리 유형 감지
             query_type = self._detect_query_type(user_query)
             
-            # 변경 분석인 경우 특별 처리
+            # RAG 검색 수행
             if query_type == "change_analysis":
                 logger.info(f"🔄 변경 분석 모드로 처리: {user_query}")
-                
-                # 확장된 검색 수행
                 relevant_chunks = self.retrieve_change_analysis_chunks(user_query, top_k=5)
-                rag_context = self.build_rag_context(relevant_chunks)
-                
-                # 변경 분석 전용 프롬프트 사용
-                system_prompt = self.create_change_analysis_prompt(user_query, rag_context)
-                
-                # 더 긴 응답을 위해 max_tokens 증가
-                max_tokens = 2000
-                temperature = 0.2  # 더 일관된 분석을 위해 낮은 temperature
-                
             else:
-                # 기존 방식으로 처리
                 relevant_chunks = self.retrieve_relevant_chunks(user_query, top_k=3)
-                rag_context = self.build_rag_context(relevant_chunks)
+            
+            # 유사도 기반 소스 선택 로직
+            SIMILARITY_THRESHOLD = 0.4
+            high_quality_chunks = []
+            low_quality_chunks = []
+            
+            for chunk in relevant_chunks:
+                if chunk['score'] >= SIMILARITY_THRESHOLD:
+                    high_quality_chunks.append(chunk)
+                else:
+                    low_quality_chunks.append(chunk)
+            
+            # 소스 정보 구성
+            sources = []
+            rag_context = ""
+            web_search_used = False
+            web_search_results = ""
+            
+            # 선택된 도면 정보 추가
+            drawing_context = ""
+            if selected_drawing and selected_drawing != "선택하지 않음":
+                logger.info(f"📄 선택된 도면 정보 활용: {selected_drawing}")
+                
+                try:
+                    # 최신 버전의 도면 데이터 조회
+                    drawing_data = self.get_drawing_data_from_db(selected_drawing, "latest")
+                    
+                    if drawing_data:
+                        drawing_context = self.build_drawing_context(drawing_data, "선택된 도면")
+                        
+                        # 도면 소스 정보 추가
+                        sources.append({
+                            'type': 'database',
+                            'icon': '🗄️',
+                            'source': f'선택된 도면 - {selected_drawing}',
+                            'score': None,
+                            'page': None,
+                            'content_preview': f"등록일: {drawing_data.get('create_date')}, 등록자: {drawing_data.get('user')}",
+                            'quality': 'high'
+                        })
+                        
+                        logger.info(f"✅ 선택된 도면 데이터 조회 성공: {selected_drawing}")
+                    else:
+                        logger.warning(f"⚠️ 선택된 도면 데이터 조회 실패: {selected_drawing}")
+                        drawing_context = f"\n\n⚠️ 선택된 도면 '{selected_drawing}'의 데이터를 찾을 수 없습니다.\n"
+                        
+                except Exception as e:
+                    logger.error(f"선택된 도면 조회 중 오류: {e}")
+                    drawing_context = f"\n\n⚠️ 선택된 도면 조회 중 오류가 발생했습니다: {str(e)}\n"
+            
+            # 고품질 RAG 데이터가 있는 경우
+            if high_quality_chunks:
+                logger.info(f"📖 고품질 RAG 데이터 {len(high_quality_chunks)}개 발견 (유사도 ≥ {SIMILARITY_THRESHOLD})")
+                
+                rag_context = self.build_rag_context(high_quality_chunks)
+                
+                # RAG 소스 정보 추가
+                for chunk in high_quality_chunks:
+                    sources.append({
+                        'type': 'rag',
+                        'icon': '📖',
+                        'source': 'RAG 데이터베이스',
+                        'score': chunk['score'],
+                        'page': chunk['page'],
+                        'content_preview': chunk['content'][:200] + "..." if len(chunk['content']) > 200 else chunk['content'],
+                        'quality': 'high'
+                    })
+                
+                # 저품질 데이터도 있다면 추가 (참고용)
+                if low_quality_chunks:
+                    for chunk in low_quality_chunks:
+                        sources.append({
+                            'type': 'rag',
+                            'icon': '📖',
+                            'source': 'RAG 데이터베이스 (참고)',
+                            'score': chunk['score'],
+                            'page': chunk['page'],
+                            'content_preview': chunk['content'][:200] + "..." if len(chunk['content']) > 200 else chunk['content'],
+                            'quality': 'low'
+                        })
+            
+            # 고품질 RAG 데이터가 없거나 부족한 경우 웹 검색 시도
+            # 단, internal_data 타입은 웹 검색 금지
+            if (not high_quality_chunks or len(high_quality_chunks) < 2) and query_type != "internal_data":
+                logger.info(f"🌐 RAG 데이터 부족 (고품질: {len(high_quality_chunks)}개) - 웹 검색 시도")
+                
+                try:
+                    # GPT에게 인터넷 검색 요청
+                    web_search_prompt = f"""다음 질문에 대해 최신 정보를 제공해주세요. P&ID 및 공정 제어 관련 기술 정보를 포함해 주세요:
+
+질문: {user_query}
+
+답변 시 다음을 포함해 주세요:
+1. 최신 기술 동향
+2. 관련 표준 및 규격
+3. 실무적 적용 사례
+4. 안전 고려사항
+
+답변 출처를 명시하지 말고, 전문적이고 종합적인 정보를 제공해 주세요."""
+
+                    web_response = self.client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {"role": "system", "content": "당신은 P&ID 및 공정제어 전문가입니다. 최신 기술 정보와 실무 지식을 바탕으로 정확한 답변을 제공하세요."},
+                            {"role": "user", "content": web_search_prompt}
+                        ],
+                        temperature=0.3,
+                        max_tokens=1000
+                    )
+                    
+                    web_search_results = web_response.choices[0].message.content
+                    web_search_used = True
+                    
+                    # 웹 검색 소스 정보 추가
+                    sources.append({
+                        'type': 'web',
+                        'icon': '🌐',
+                        'source': '인터넷 검색 (GPT-4 기반)',
+                        'score': None,
+                        'page': None,
+                        'content_preview': web_search_results[:200] + "..." if len(web_search_results) > 200 else web_search_results,
+                        'quality': 'web'
+                    })
+                    
+                    logger.info("✅ 웹 검색 완료")
+                    
+                except Exception as e:
+                    logger.error(f"웹 검색 실패: {e}")
+                    web_search_results = ""
+            elif query_type == "internal_data":
+                logger.info(f"🔒 내부 데이터 질문 - 웹 검색 스킵 (RAG 전용)")
+            else:
+                logger.info(f"📖 RAG 데이터 충분 (고품질: {len(high_quality_chunks)}개) - 웹 검색 불필요")
+            
+            # 프롬프트 생성
+            if query_type == "change_analysis":
+                system_prompt = self.create_change_analysis_prompt(user_query, rag_context)
+                max_tokens = 2000
+                temperature = 0.2
+            elif query_type == "internal_data":
+                system_prompt = self.create_internal_data_prompt(user_query, rag_context)
+                max_tokens = 1800
+                temperature = 0.1  # 더 일관된 답변을 위해 낮은 temperature
+            else:
                 system_prompt = self.create_pid_expert_prompt(user_query, rag_context)
                 max_tokens = 1500
                 temperature = 0.3
             
-            # 컨텍스트 품질 확인
-            context_quality = "high" if len(rag_context) > 100 else "low"
+            # 선택된 도면 정보가 있으면 시스템 프롬프트에 추가
+            if drawing_context:
+                system_prompt += f"""
+
+**선택된 도면 정보:**
+{drawing_context}
+
+위 선택된 도면 정보를 우선적으로 참고하여 답변해주세요. 특히 사용자의 질문이 이 도면과 관련된 내용이라면 도면의 구체적인 데이터를 활용해주세요."""
+            
+            # 웹 검색 결과가 있으면 프롬프트에 추가
+            if web_search_results:
+                system_prompt += f"""
+
+**추가 최신 정보 (웹 검색 결과):**
+{web_search_results}
+
+위 웹 검색 정보도 참고하여 최신 동향과 실무 정보를 포함한 종합적인 답변을 제공해주세요."""
+
+            # 컨텍스트 품질 평가
+            if drawing_context or high_quality_chunks:
+                context_quality = "high"
+            elif low_quality_chunks or web_search_results:
+                context_quality = "medium"
+            else:
+                context_quality = "low"
             
             # OpenAI API 호출
             if not self.client:
                 return {
                     'response': "OpenAI API 키가 설정되지 않았습니다. .env 파일을 확인해주세요.",
-                    'sources': [],
+                    'sources': sources,
                     'query_type': query_type,
                     'context_quality': context_quality,
-                    'web_search_used': False
+                    'web_search_used': web_search_used,
+                    'similarity_threshold': SIMILARITY_THRESHOLD,
+                    'selected_drawing': selected_drawing
                 }
             
             try:
@@ -374,22 +846,22 @@ class PIDExpertChatbot:
                 
                 ai_response = response.choices[0].message.content
                 
-                # 변경 분석인 경우 응답에 특별 표시 추가
+                # 응답에 소스 정보 표시 추가
+                source_info = self._build_source_summary(sources, SIMILARITY_THRESHOLD)
+                if source_info:
+                    ai_response += f"\n\n{source_info}"
+                
+                # 변경 분석인 경우 특별 표시
                 if query_type == "change_analysis":
                     ai_response = "🔄 **변경 분석 모드**\n\n" + ai_response
+                
+                # 선택된 도면이 있는 경우 표시
+                if selected_drawing and selected_drawing != "선택하지 않음":
+                    ai_response = f"📄 **분석 기준 도면: {selected_drawing}**\n\n" + ai_response
                 
             except Exception as e:
                 logger.error(f"OpenAI API 호출 실패: {e}")
                 ai_response = f"OpenAI API 오류: {e}"
-            
-            # 소스 정보 생성 (Streamlit 호환)
-            sources = []
-            for chunk in relevant_chunks:
-                sources.append({
-                    'page': chunk['page'],
-                    'score': chunk['score'],
-                    'content_preview': chunk['content'][:200] + "..." if len(chunk['content']) > 200 else chunk['content']
-                })
             
             # 대화 기록 저장
             self.conversation_history.append({
@@ -398,7 +870,10 @@ class PIDExpertChatbot:
                 'response': ai_response,
                 'query_type': query_type,
                 'context_quality': context_quality,
-                'sources_count': len(sources)
+                'sources_count': len(sources),
+                'web_search_used': web_search_used,
+                'similarity_threshold': SIMILARITY_THRESHOLD,
+                'selected_drawing': selected_drawing
             })
             
             return {
@@ -406,7 +881,12 @@ class PIDExpertChatbot:
                 'sources': sources,
                 'query_type': query_type,
                 'context_quality': context_quality,
-                'web_search_used': use_web_search
+                'web_search_used': web_search_used,
+                'similarity_threshold': SIMILARITY_THRESHOLD,
+                'high_quality_sources': len(high_quality_chunks),
+                'low_quality_sources': len(low_quality_chunks),
+                'selected_drawing': selected_drawing,
+                'drawing_context_used': bool(drawing_context)
             }
             
         except Exception as e:
@@ -416,8 +896,42 @@ class PIDExpertChatbot:
                 'sources': [],
                 'query_type': 'error',
                 'context_quality': 'none',
-                'web_search_used': False
+                'web_search_used': False,
+                'similarity_threshold': 0.4,
+                'selected_drawing': selected_drawing
             }
+
+    def _build_source_summary(self, sources: List[Dict], threshold: float) -> str:
+        """소스 요약 정보 생성"""
+        if not sources:
+            return ""
+        
+        summary_parts = []
+        summary_parts.append("---")
+        summary_parts.append("**📋 정보 출처:**")
+        
+        rag_sources = [s for s in sources if s['type'] == 'rag']
+        web_sources = [s for s in sources if s['type'] == 'web']
+        
+        if rag_sources:
+            high_quality = [s for s in rag_sources if s.get('quality') == 'high']
+            low_quality = [s for s in rag_sources if s.get('quality') == 'low']
+            
+            if high_quality:
+                summary_parts.append(f"📖 **RAG 데이터베이스** (고품질, 유사도 ≥ {threshold}): {len(high_quality)}개")
+                for source in high_quality:
+                    summary_parts.append(f"  • 페이지 {source['page']}, 유사도: {source['score']:.3f}")
+            
+            if low_quality:
+                summary_parts.append(f"📖 **RAG 데이터베이스** (참고용, 유사도 < {threshold}): {len(low_quality)}개")
+                for source in low_quality:
+                    summary_parts.append(f"  • 페이지 {source['page']}, 유사도: {source['score']:.3f}")
+        
+        if web_sources:
+            summary_parts.append(f"🌐 **인터넷 검색**: {len(web_sources)}개")
+            summary_parts.append("  • GPT-4 기반 최신 정보 검색")
+        
+        return "\n".join(summary_parts)
 
     def get_conversation_summary(self) -> Dict:
         """대화 요약 통계"""
@@ -464,4 +978,323 @@ class PIDExpertChatbot:
             export_text += f"컨텍스트 품질: {conv['context_quality']}\n"
             export_text += "-" * 30 + "\n\n"
         
-        return export_text 
+        return export_text
+
+    def create_internal_data_prompt(self, user_question, rag_context):
+        """내부 데이터 전용 프롬프트 생성 - 웹 검색 없이 RAG만 사용"""
+        
+        internal_expert_persona = """당신은 20년 경력의 P&ID 및 공정 제어 시스템 전문가입니다.
+
+**전문 분야:**
+- P&ID 도면 해석 및 분석
+- 공정 시스템 설계 및 운전
+- 계측 및 제어 시스템 분석
+- 공정 안전 관리
+- 설비 및 장치 운전
+
+**중요 원칙:**
+⚠️ **기밀성 준수**: 제공된 내부 문서만을 기반으로 답변하며, 외부 정보는 절대 사용하지 않습니다.
+📋 **정확성 우선**: 문서에 명시되지 않은 내용은 추측하지 않으며, 불확실한 부분은 명확히 표시합니다.
+🔍 **상세 분석**: 제공된 문서의 내용을 체계적이고 상세하게 분석합니다.
+
+**답변 구조:**
+1. **핵심 요약** (문서 기반 주요 내용)
+2. **상세 분석** (기술적 세부사항)
+3. **운전 관련 사항** (실무적 고려사항)
+4. **주의사항** (안전 및 제약 조건)
+5. **문서 기반 제한사항** (확인이 필요한 부분)
+
+**답변 스타일:**
+- 문서에 근거한 정확한 정보만 제공
+- "문서에 따르면...", "제공된 자료에서..." 등의 표현 사용
+- 불확실한 내용은 "문서에서 확인되지 않음" 명시"""
+
+        # 내부 데이터 전용 시스템 프롬프트
+        system_prompt = f"""{internal_expert_persona}
+
+**제공된 내부 문서:**
+{rag_context if rag_context else "관련 내부 문서가 없습니다."}
+
+**중요 지침:**
+1. 오직 위에 제공된 내부 문서만을 기반으로 답변하세요
+2. 외부 지식이나 일반적인 정보는 사용하지 마세요
+3. 문서에 없는 내용은 "제공된 문서에서 확인할 수 없습니다"라고 명시하세요
+4. 모든 답변은 문서의 구체적 내용을 인용하여 근거를 제시하세요
+
+위 지침을 엄격히 준수하여 사용자의 질문에 답변해주세요."""
+
+        return system_prompt
+
+    def get_all_drawing_names(self) -> List[str]:
+        """
+        데이터베이스에서 모든 도면 파일명을 조회
+        
+        Returns:
+            도면 파일명 리스트 (중복 제거)
+        """
+        try:
+            conn = get_db_connection()
+            if not conn:
+                logger.error("데이터베이스 연결 실패")
+                return []
+            
+            cursor = conn.cursor()
+            
+            query = """
+            SELECT DISTINCT d_name
+            FROM domyun 
+            ORDER BY d_name
+            """
+            
+            cursor.execute(query)
+            results = cursor.fetchall()
+            
+            cursor.close()
+            conn.close()
+            
+            # 파일명만 추출
+            drawing_names = [result[0] for result in results if result[0]]
+            
+            logger.info(f"데이터베이스에서 {len(drawing_names)}개의 도면 파일명 조회됨")
+            return drawing_names
+                
+        except Exception as e:
+            logger.error(f"도면 파일명 조회 실패: {e}")
+            return []
+
+    def get_drawing_versions_info(self, d_name: str) -> List[Dict]:
+        """
+        특정 도면의 모든 버전 정보를 조회 (메타데이터만)
+        
+        Args:
+            d_name: 도면 파일명
+        
+        Returns:
+            버전 정보 리스트 (최신순)
+        """
+        try:
+            conn = get_db_connection()
+            if not conn:
+                logger.error("데이터베이스 연결 실패")
+                return []
+            
+            cursor = conn.cursor()
+            
+            query = """
+            SELECT d_id, "user", create_date
+            FROM domyun 
+            WHERE d_name = %s 
+            ORDER BY create_date DESC
+            """
+            
+            cursor.execute(query, (d_name,))
+            results = cursor.fetchall()
+            
+            cursor.close()
+            conn.close()
+            
+            versions = []
+            for i, result in enumerate(results):
+                d_id, user, create_date = result
+                versions.append({
+                    'd_id': d_id,
+                    'user': user,
+                    'create_date': create_date,
+                    'version_label': f"버전 {i+1}" if i > 0 else "최신",
+                    'is_latest': i == 0
+                })
+            
+            return versions
+                
+        except Exception as e:
+            logger.error(f"도면 버전 정보 조회 실패: {e}")
+            return []
+
+    def generate_drawing_summary(self, d_name: str, version: str = "latest") -> Dict:
+        """
+        특정 도면의 요약 정보를 생성
+        
+        Args:
+            d_name: 도면 파일명
+            version: "latest" (최신) 또는 "previous" (이전) 또는 d_id
+        
+        Returns:
+            요약 정보가 포함된 응답 딕셔너리
+        """
+        try:
+            # 도면 데이터 조회
+            if version.isdigit():
+                # d_id로 직접 조회
+                drawing_data = self.get_drawing_data_by_id(int(version))
+            else:
+                drawing_data = self.get_drawing_data_from_db(d_name, version)
+            
+            if not drawing_data:
+                return {
+                    'response': f"❌ '{d_name}' ({version}) 도면을 데이터베이스에서 찾을 수 없습니다.",
+                    'sources': [],
+                    'query_type': 'drawing_summary',
+                    'context_quality': 'none',
+                    'web_search_used': False,
+                    'drawing_data': None
+                }
+            
+            # 도면에서 텍스트 추출
+            extracted_text = self.extract_text_from_drawing_data(drawing_data)
+            
+            # 요약 생성을 위한 프롬프트
+            summary_prompt = f"""당신은 P&ID 도면 분석 전문가입니다. 다음 도면 정보를 바탕으로 전문적이고 구조화된 요약을 작성해주세요.
+
+**도면 정보:**
+- 파일명: {drawing_data.get('d_name')}
+- 등록일: {drawing_data.get('create_date')}
+- 등록자: {drawing_data.get('user')}
+
+**추출된 텍스트:**
+{extracted_text if extracted_text else '텍스트 정보 없음'}
+
+**요약 구조:**
+1. **도면 개요** (도면의 목적과 주요 기능)
+2. **주요 구성 요소** (계측기기, 밸브, 펌프 등)
+3. **제어 시스템** (제어 루프 및 안전장치)
+4. **운전 특성** (주요 운전 조건 및 절차)
+5. **안전 고려사항** (안전장치 및 비상대응)
+
+각 섹션을 명확히 구분하여 작성하고, 가능한 한 구체적인 태그 번호나 설비명을 포함해주세요.
+추출된 텍스트가 부족하다면 일반적인 P&ID 분석 원칙에 따라 보완 설명을 제공하되, 
+"추출된 정보 기반" vs "일반적 설명" 을 명확히 구분해주세요."""
+
+            # OpenAI API 호출
+            if not self.client:
+                return {
+                    'response': "OpenAI API 키가 설정되지 않았습니다.",
+                    'sources': [],
+                    'query_type': 'drawing_summary',
+                    'context_quality': 'none',
+                    'web_search_used': False,
+                    'drawing_data': drawing_data
+                }
+            
+            try:
+                response = self.client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "당신은 20년 경력의 P&ID 전문가입니다. 정확하고 실용적인 도면 분석을 제공합니다."},
+                        {"role": "user", "content": summary_prompt}
+                    ],
+                    temperature=0.2,
+                    max_tokens=2000
+                )
+                
+                summary_response = response.choices[0].message.content
+                
+                # 도면 정보 추가
+                final_response = f"""📋 **도면 요약 분석**
+
+**📄 도면 정보:**
+- **파일명:** {drawing_data.get('d_name')}
+- **등록일:** {drawing_data.get('create_date')}
+- **등록자:** {drawing_data.get('user')}
+- **버전:** {version}
+
+---
+
+{summary_response}
+
+---
+
+**📊 추출 통계:**
+- **텍스트 길이:** {len(extracted_text)} 문자
+- **JSON 데이터:** {'있음' if drawing_data.get('json_data') else '없음'}
+"""
+                
+                # 소스 정보 구성
+                sources = [{
+                    'type': 'database',
+                    'icon': '🗄️',
+                    'source': f'도면 데이터베이스 - {d_name}',
+                    'score': None,
+                    'page': None,
+                    'content_preview': f"등록일: {drawing_data.get('create_date')}, 등록자: {drawing_data.get('user')}",
+                    'quality': 'high'
+                }]
+                
+                return {
+                    'response': final_response,
+                    'sources': sources,
+                    'query_type': 'drawing_summary',
+                    'context_quality': 'high',
+                    'web_search_used': False,
+                    'drawing_data': drawing_data,
+                    'extracted_text_length': len(extracted_text)
+                }
+                
+            except Exception as e:
+                logger.error(f"OpenAI API 호출 실패: {e}")
+                return {
+                    'response': f"요약 생성 중 오류가 발생했습니다: {str(e)}",
+                    'sources': [],
+                    'query_type': 'drawing_summary',
+                    'context_quality': 'none',
+                    'web_search_used': False,
+                    'drawing_data': drawing_data
+                }
+                
+        except Exception as e:
+            logger.error(f"도면 요약 생성 실패: {e}")
+            return {
+                'response': f"도면 요약 생성 중 오류가 발생했습니다: {str(e)}",
+                'sources': [],
+                'query_type': 'drawing_summary',
+                'context_quality': 'none',
+                'web_search_used': False,
+                'drawing_data': None
+            }
+
+    def get_drawing_data_by_id(self, d_id: int) -> Optional[Dict]:
+        """
+        d_id로 특정 도면 데이터를 조회
+        
+        Args:
+            d_id: 도면 ID
+        
+        Returns:
+            도면 데이터 또는 None
+        """
+        try:
+            conn = get_db_connection()
+            if not conn:
+                logger.error("데이터베이스 연결 실패")
+                return None
+            
+            cursor = conn.cursor()
+            
+            query = """
+            SELECT d_id, d_name, "user", create_date, json_data, image_path
+            FROM domyun 
+            WHERE d_id = %s
+            """
+            
+            cursor.execute(query, (d_id,))
+            result = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
+            
+            if result:
+                d_id, d_name, user, create_date, json_data, image_path = result
+                return {
+                    'd_id': d_id,
+                    'd_name': d_name,
+                    'user': user,
+                    'create_date': create_date,
+                    'json_data': json_data,
+                    'image_path': image_path
+                }
+            else:
+                logger.warning(f"도면 ID '{d_id}'를 찾을 수 없습니다")
+                return None
+                
+        except Exception as e:
+            logger.error(f"데이터베이스 조회 실패: {e}")
+            return None 
