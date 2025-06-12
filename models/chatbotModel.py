@@ -628,8 +628,53 @@ class PIDExpertChatbot:
         return '\n'.join(context_parts)
 
     def generate_response(self, user_query: str, use_web_search: bool = False, selected_drawing: str = None, selected_files: List[Dict] = None) -> Dict:
-        """챗봇 응답 생성 - 변경 분석 중심"""
+        """
+        사용자 질문에 대한 응답 생성
+        
+        Args:
+            user_query: 사용자 질문
+            use_web_search: 웹 검색 사용 여부
+            selected_drawing: 선택된 도면 파일명
+            selected_files: 선택된 파일 목록
+            
+        Returns:
+            응답 데이터
+        """
+        selected_drawing = '../uploads/uploaded_images/stream_dose_ai_1.png'
         try:
+            # 시각화 요청 감지
+            if "시각화" in user_query and selected_drawing:
+                # 시각화 수행
+                print( '시각화 수행')
+                viz_result = self.visualize_drawing_analysis(selected_drawing)
+                print(viz_result)
+                if not viz_result:
+                    return {
+                        'response': f"❌ '{selected_drawing}' 도면의 시각화에 실패했습니다.",
+                        'sources': [],
+                        'query_type': 'drawing_visualization',
+                        'context_quality': 'none',
+                        'web_search_used': False,
+                        'visualization': None
+                    }
+                
+                return {
+                    'response': viz_result['analysis_summary'],
+                    'sources': [{
+                        'type': 'visualization',
+                        'icon': '🎨',
+                        'source': f'도면 시각화 - {selected_drawing}',
+                        'score': None,
+                        'page': None,
+                        'content_preview': f"OCR {viz_result['ocr_count']}개, Detection {viz_result['detection_count']}개 시각화",
+                        'quality': 'high'
+                    }],
+                    'query_type': 'drawing_visualization',
+                    'context_quality': 'high',
+                    'web_search_used': False,
+                    'visualization': viz_result
+                }
+
             # 선택된 파일들 처리 및 디버그 정보 수집
             selected_files_context = ""
             file_details = []
@@ -1601,98 +1646,84 @@ class PIDExpertChatbot:
             logger.error(f"도면 검색 실패: {e}")
             return []
 
-    def visualize_drawing_analysis(self, d_name: str, version: str = "latest") -> Optional[Dict]:
-        """
-        도면 시각화 분석 - OCR과 Detection 결과를 이미지에 그려서 반환
-        
-        Args:
-            d_name: 도면 파일명
-            version: "latest" (최신) 또는 "previous" (이전) 또는 d_id
-        
-        Returns:
-            시각화된 이미지 정보와 분석 결과
-        """
+    def visualize_drawing_analysis(self, image_path: str, version: str = "latest") -> Optional[Dict]:
+        """도면 시각화 분석 수행"""
         try:
-            # 도면 데이터 조회
-            if version.isdigit():
-                drawing_data = self.get_drawing_data_by_id(int(version))
-            else:
-                drawing_data = self.get_drawing_data_from_db(d_name, version)
-            
-            if not drawing_data:
-                logger.error(f"도면 '{d_name}' ({version})을 찾을 수 없습니다")
-                return None
-            
-            # 이미지 경로 확인
-            image_path = drawing_data.get('image_path')
-            if not image_path or not os.path.exists(image_path):
-                logger.error(f"이미지 파일을 찾을 수 없습니다: {image_path}")
-                return None
-            
-            # JSON 데이터 확인
-            json_data = drawing_data.get('json_data')
-            if not json_data:
-                logger.error("JSON 데이터가 없습니다")
-                return None
-            
+        
             # 이미지 로드
-            original_image = Image.open(image_path)
-            
-            # JSON에서 예상 크기 가져오기
-            expected_width = json_data.get('width', original_image.width)
-            expected_height = json_data.get('height', original_image.height)
-            
-            # 이미지 크기 조정
-            if original_image.size != (expected_width, expected_height):
-                logger.info(f"이미지 크기 조정: {original_image.size} -> ({expected_width}, {expected_height})")
-                image = original_image.resize((expected_width, expected_height), Image.Resampling.LANCZOS)
-            else:
-                image = original_image.copy()
-            
-            # 그리기 객체 생성
+            if not image_path:
+                logger.error(f"이미지 파일을 찾을 수 없음: {image_path}")
+                return None
+
+            # 원본 이미지 로드 및 크기 조정
+            image = Image.open(image_path)
+            original_size = image.size
+
+            # 이미지가 너무 크면 리사이즈
+            max_size = (1920, 1080)
+            if image.size[0] > max_size[0] or image.size[1] > max_size[1]:
+                image.thumbnail(max_size, Image.Resampling.LANCZOS)
+            resized_size = image.size
+
+            # 시각화 준비
             draw = ImageDraw.Draw(image)
-            
-            # 폰트 설정 (기본 폰트 사용)
+
+            # 폰트 설정
             try:
-                font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 12)
-                small_font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 10)
+                font = ImageFont.truetype("assets/fonts/NanumGothic.ttf", 20)
+                small_font = ImageFont.truetype("assets/fonts/NanumGothic.ttf", 16)
             except:
                 font = ImageFont.load_default()
                 small_font = ImageFont.load_default()
-            
-            # OCR 결과 그리기
+
+            # OCR 결과 시각화 및 텍스트 수집
             ocr_count = 0
-            if 'ocr_data' in json_data and json_data['ocr_data']:
-                ocr_count = self._draw_ocr_results(draw, json_data['ocr_data'], font, small_font)
-            
-            # Detection 결과 그리기
+            detected_texts = []
+            drawing_data = './uploads/detection_results/stream_dose_ai_1.json'
+            if 'ocr' in drawing_data['json_data']:
+                ocr_count = self._draw_ocr_results(draw, drawing_data['json_data']['ocr'], font, small_font)
+                detected_texts = self._extract_ocr_texts(drawing_data['json_data'])
+
+            # Detection 결과 시각화 및 라벨 수집
             detection_count = 0
-            if 'detection_data' in json_data and json_data['detection_data']:
-                detection_count = self._draw_detection_results(draw, json_data['detection_data'], font)
-            
-            # 이미지를 Base64로 인코딩
-            img_buffer = io.BytesIO()
-            image.save(img_buffer, format='PNG', quality=95)
-            img_base64 = base64.b64encode(img_buffer.getvalue()).decode()
-            
-            # 분석 결과 반환
-            result = {
-                'drawing_name': d_name,
-                'version': version,
-                'image_base64': img_base64,
-                'original_size': original_image.size,
-                'resized_size': (expected_width, expected_height),
+            detected_labels = []
+            if 'detecting' in drawing_data['json_data']:
+                detection_count = self._draw_detection_results(draw, drawing_data['json_data']['detecting'], font)
+                detection_info = self._extract_detection_info(drawing_data['json_data'])
+                detected_labels = [d.get('label', '') for d in detection_info if d.get('label')]
+
+            # 시각화된 이미지 저장
+            output_path = f"temp/visualized.png"
+            os.makedirs("temp", exist_ok=True)
+            image.save(output_path)
+
+            # 분석 요약 생성 (OpenAI API 호출 없이)
+            analysis_summary = f"""시각화된 도면에서 다음과 같은 요소들이 탐지되었습니다:
+
+1. OCR 텍스트 탐지 (파란색 박스): {ocr_count}개
+   - 탐지된 텍스트: {', '.join(detected_texts[:10])}{'...' if len(detected_texts) > 10 else ''}
+
+2. P&ID 기호 탐지 (빨간색 박스): {detection_count}개
+   - 탐지된 기호: {', '.join(detected_labels[:10])}{'...' if len(detected_labels) > 10 else ''}
+
+📌 시각화 범례:
+- 🔵 파란색 박스: OCR로 인식된 텍스트 영역 (계측기 태그명, 설비명, 라벨 등)
+- 🔴 빨간색 박스: AI가 탐지한 P&ID 기호 (계측기, 밸브, 배관, 펌프 등)"""
+
+            return {
+                'drawing_data': drawing_data,
+                'visualization_path': output_path,
+                'original_size': original_size,
+                'resized_size': resized_size,
                 'ocr_count': ocr_count,
                 'detection_count': detection_count,
-                'drawing_data': drawing_data,
-                'analysis_summary': f"OCR 텍스트 {ocr_count}개, Detection 객체 {detection_count}개 시각화 완료"
+                'detected_texts': detected_texts,
+                'detected_labels': detected_labels,
+                'analysis_summary': analysis_summary
             }
-            
-            logger.info(f"도면 시각화 완료: {d_name} - OCR {ocr_count}개, Detection {detection_count}개")
-            return result
-            
+
         except Exception as e:
-            logger.error(f"도면 시각화 실패: {e}")
+            logger.error(f"도면 시각화 분석 중 오류 발생: {e}")
             return None
 
     def _draw_ocr_results(self, draw: ImageDraw.Draw, ocr_data: Dict, font, small_font) -> int:
@@ -1761,27 +1792,16 @@ class PIDExpertChatbot:
         return count
 
     def _draw_detection_results(self, draw: ImageDraw.Draw, detection_data: Dict, font) -> int:
-        """
-        Detection 결과를 이미지에 그리기
-        
-        Args:
-            draw: PIL ImageDraw 객체
-            detection_data: Detection 데이터
-            font: 폰트
-        
-        Returns:
-            그려진 Detection 객체 개수
-        """
+        """Detection 결과를 이미지에 그리기"""
         count = 0
         
-        if 'detections' not in detection_data:
+        if not detection_data or 'detections' not in detection_data:
             return count
         
         for detection in detection_data['detections']:
             try:
                 # 라벨 정보
                 label = detection.get('label', 'Unknown')
-                confidence = detection.get('confidence', 0.0)
                 
                 # 바운딩 박스 정보 (중심점 기반)
                 bbox = detection.get('boundingBox')
@@ -1802,8 +1822,8 @@ class PIDExpertChatbot:
                 # 바운딩 박스 그리기 (빨간색)
                 draw.rectangle([x1, y1, x2, y2], outline='red', width=3)
                 
-                # 레이블과 신뢰도 표시
-                label_text = f"{label} ({confidence:.2f})"
+                # 레이블 표시
+                label_text = label
                 
                 # 텍스트 배경 그리기
                 text_bbox = draw.textbbox((x1, y1-20), label_text, font=font)
@@ -1819,16 +1839,7 @@ class PIDExpertChatbot:
         return count
 
     def analyze_drawing_with_visualization(self, d_name: str, user_question: str = None) -> Dict:
-        """
-        도면 분석과 시각화를 통합하여 수행
-        
-        Args:
-            d_name: 도면 파일명
-            user_question: 사용자 질문 (선택사항)
-        
-        Returns:
-            분석 결과와 시각화 이미지가 포함된 응답
-        """
+        """도면 분석과 시각화를 통합하여 수행"""
         try:
             # 도면 시각화 수행
             viz_result = self.visualize_drawing_analysis(d_name)
@@ -1843,102 +1854,22 @@ class PIDExpertChatbot:
                     'visualization': None
                 }
             
-            # 도면 데이터로부터 텍스트 분석
-            drawing_data = viz_result['drawing_data']
-            extracted_text = self.extract_text_from_drawing_data(drawing_data)
-            
-            # AI 분석 프롬프트 생성
-            analysis_prompt = f"""당신은 P&ID 도면 분석 전문가입니다. 다음 P&ID 도면의 AI 탐지 결과를 분석하고 시각화 결과를 설명해주세요.
-
-**📋 P&ID 도면 정보:**
-- 파일명: {d_name}
-- 등록일: {drawing_data.get('create_date')}
-- 이미지 크기: {viz_result['original_size']} → {viz_result['resized_size']}
-- AI 탐지된 OCR 텍스트: {viz_result['ocr_count']}개 (계측기 태그, 라벨 등)
-- AI 탐지된 P&ID 기호: {viz_result['detection_count']}개 (계측기기, 밸브, 배관 등)
-
-**🔍 AI가 P&ID 도면에서 탐지한 텍스트 (계측기 태그명, 설비명, 라벨 등):**
-{extracted_text if extracted_text else 'AI 텍스트 탐지 결과 없음'}
-
-**🎯 AI 탐지 및 시각화 결과:**
-{viz_result['analysis_summary']}
-
-{"**사용자 질문:** " + user_question if user_question else ""}
-
-**분석 요청:**
-1. **P&ID 도면 개요**: 이 도면의 주요 공정 목적과 특징
-2. **OCR 탐지 분석**: AI가 인식한 텍스트에서 발견된 주요 계측기 태그, 설비명, 제어 정보
-3. **기호 탐지 분석**: AI가 감지한 P&ID 기호들(계측기기, 밸브, 펌프 등)의 특징과 배치
-4. **시각화 해석**: 파란색 박스(OCR 텍스트)와 빨간색 박스(P&ID 기호)로 표시된 내용의 의미
-5. **공정 분석**: 탐지된 요소들을 종합한 공정 흐름과 제어 시스템 분석
-
-시각화된 이미지에서 파란색 박스는 AI가 인식한 텍스트 영역이고, 빨간색 박스는 AI가 탐지한 P&ID 기호 영역입니다."""
-
-            # OpenAI API 호출
-            if not self.client:
-                ai_response = "OpenAI API 키가 설정되지 않았습니다."
-            else:
-                try:
-                    response = self.client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=[
-                            {"role": "system", "content": "당신은 20년 경력의 P&ID 전문가입니다. 도면 분석과 시각화 결과를 전문적으로 해석합니다."},
-                            {"role": "user", "content": analysis_prompt}
-                        ],
-                        temperature=0.2,
-                        max_tokens=2000
-                    )
-                    
-                    ai_response = response.choices[0].message.content
-                    
-                except Exception as e:
-                    logger.error(f"OpenAI API 호출 실패: {e}")
-                    ai_response = f"AI 분석 중 오류가 발생했습니다: {str(e)}"
-            
-            # 최종 응답 구성
-            final_response = f"""📊 **도면 시각화 분석 결과**
-
-**📄 도면 정보:**
-- **파일명:** {d_name}
-- **등록일:** {drawing_data.get('create_date')}
-- **등록자:** {drawing_data.get('user')}
-
-**🖼️ AI 탐지 및 시각화 정보:**
-- **원본 크기:** {viz_result['original_size'][0]} × {viz_result['original_size'][1]}
-- **분석 크기:** {viz_result['resized_size'][0]} × {viz_result['resized_size'][1]}
-- **AI 탐지 텍스트:** {viz_result['ocr_count']}개 (계측기 태그, 설비명, 라벨 - 파란색 박스)
-- **AI 탐지 P&ID 기호:** {viz_result['detection_count']}개 (계측기기, 밸브, 배관 등 - 빨간색 박스)
-
----
-
-{ai_response}
-
----
-
-**📌 AI 탐지 시각화 범례:**
-- 🔵 **파란색 박스**: AI가 인식한 텍스트 영역 (계측기 태그명, 설비명, 라벨 등)
-- 🔴 **빨간색 박스**: AI가 탐지한 P&ID 기호 (계측기, 밸브, 배관, 펌프 등)
-"""
-            
-            # 소스 정보 구성
-            sources = [{
-                'type': 'visualization',
-                'icon': '🎨',
-                'source': f'도면 시각화 - {d_name}',
-                'score': None,
-                'page': None,
-                'content_preview': f"OCR {viz_result['ocr_count']}개, Detection {viz_result['detection_count']}개 시각화",
-                'quality': 'high'
-            }]
-            
+            # 시각화 결과만 반환
             return {
-                'response': final_response,
-                'sources': sources,
+                'response': viz_result['analysis_summary'],
+                'sources': [{
+                    'type': 'visualization',
+                    'icon': '🎨',
+                    'source': f'도면 시각화 - {d_name}',
+                    'score': None,
+                    'page': None,
+                    'content_preview': f"OCR {viz_result['ocr_count']}개, Detection {viz_result['detection_count']}개 시각화",
+                    'quality': 'high'
+                }],
                 'query_type': 'drawing_visualization',
                 'context_quality': 'high',
                 'web_search_used': False,
-                'visualization': viz_result,
-                'extracted_text_length': len(extracted_text)
+                'visualization': viz_result
             }
             
         except Exception as e:
@@ -2376,23 +2307,75 @@ class PIDExpertChatbot:
         return ocr_texts
 
     def _extract_detection_info(self, json_data: Dict) -> List[Dict]:
-        """JSON 데이터에서 Detection 정보 추출"""
+        """Detection 정보 추출"""
         detection_info = []
         
-        try:
-            # 새로운 구조 ('detecting')
-            if 'detecting' in json_data and json_data['detecting']:
-                detection_data = json_data['detecting']
-                if 'data' in detection_data and 'boxes' in detection_data['data']:
-                    detection_info.extend(detection_data['data']['boxes'])
-            
-            # 이전 구조 ('detection_data')
-            elif 'detection_data' in json_data and json_data['detection_data']:
-                detection_data = json_data['detection_data']
-                if 'detections' in detection_data:
-                    detection_info.extend(detection_data['detections'])
-                
-        except Exception as e:
-            logger.error(f"Detection 정보 추출 실패: {e}")
+        # 새로운 형식 (detection_data)
+        if 'detection_data' in json_data and isinstance(json_data['detection_data'], dict):
+            detections = json_data['detection_data'].get('detections', [])
+            if isinstance(detections, list):
+                for detection in detections:
+                    if isinstance(detection, dict):
+                        info = {
+                            'label': detection.get('label', 'Unknown'),
+                            'id': detection.get('id', ''),
+                        }
+                        
+                        # 위치 정보 추출
+                        if 'boundingBox' in detection:
+                            bbox = detection['boundingBox']
+                            info['x'] = bbox.get('x', 0)
+                            info['y'] = bbox.get('y', 0)
+                            info['width'] = bbox.get('width', 0)
+                            info['height'] = bbox.get('height', 0)
+                        elif all(k in detection for k in ['x', 'y', 'width', 'height']):
+                            info['x'] = detection['x']
+                            info['y'] = detection['y']
+                            info['width'] = detection['width']
+                            info['height'] = detection['height']
+                        
+                        detection_info.append(info)
+        
+        # 이전 형식 (detecting)
+        elif 'detecting' in json_data and isinstance(json_data['detecting'], dict):
+            data = json_data['detecting'].get('data', {})
+            if isinstance(data, dict) and 'boxes' in data:
+                boxes = data['boxes']
+                if isinstance(boxes, list):
+                    for box in boxes:
+                        if isinstance(box, dict):
+                            info = {
+                                'label': box.get('label', 'Unknown'),
+                                'id': box.get('id', ''),
+                            }
+                            
+                            # 위치 정보 추출
+                            if all(k in box for k in ['x', 'y', 'width', 'height']):
+                                info['x'] = box['x']
+                                info['y'] = box['y']
+                                info['width'] = box['width']
+                                info['height'] = box['height']
+                            
+                            detection_info.append(info)
+        
+        # 직접 boxes 배열이 있는 경우
+        elif isinstance(json_data, dict) and 'boxes' in json_data:
+            boxes = json_data['boxes']
+            if isinstance(boxes, list):
+                for box in boxes:
+                    if isinstance(box, dict):
+                        info = {
+                            'label': box.get('label', 'Unknown'),
+                            'id': box.get('id', ''),
+                        }
+                        
+                        # 위치 정보 추출
+                        if all(k in box for k in ['x', 'y', 'width', 'height']):
+                            info['x'] = box['x']
+                            info['y'] = box['y']
+                            info['width'] = box['width']
+                            info['height'] = box['height']
+                        
+                        detection_info.append(info)
         
         return detection_info
