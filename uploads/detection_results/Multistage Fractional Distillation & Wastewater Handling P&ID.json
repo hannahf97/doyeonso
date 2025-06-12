@@ -1,0 +1,37 @@
+{
+  "label": "detecting",
+  "data": {
+      "boxes": [
+          {
+              "id": "1",
+              "label": "gate valve",
+              "x": "69.12",
+              "y": "233.21",
+              "width": "26.75",
+              "height": "16.60",
+              "confidence": null
+          },
+          {
+              "id": "2",
+              "label": "gate valve",
+              "x": "72.96",
+              "y": "289.25",
+              "width": "39.90",
+              "height": "19.71",
+              "confidence": null
+          },
+          {
+              "id": "3",
+              "label": "gate valve",
+              "x": "130.67",
+              "y": "396.16",
+              "width": "25.47",
+              "height": "29.22",
+              "confidence": null
+          }
+      ],
+      "height": 701,
+      "key": "16.jpg",
+      "width": 819
+  }
+}

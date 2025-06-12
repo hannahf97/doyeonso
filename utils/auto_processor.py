@@ -109,7 +109,7 @@ def convert_uploaded_file_to_images(file_bytes: bytes, original_filename: str) -
     return result
 
 def create_integrated_json(image_path: str, ocr_result: Dict, original_filename: str) -> Dict[str, Any]:
-    """OCR과 Detection 결과를 통합하여 testsum{seq}.json 생성"""
+    """OCR과 Detection 결과를 통합하여 testsum{seq}.json 생성 (파일명 매핑 방식)"""
     
     result = {
         'success': False,
@@ -119,13 +119,57 @@ def create_integrated_json(image_path: str, ocr_result: Dict, original_filename:
     }
     
     try:
-        # Detection 기본 파일 로드
-        detection_path = 'uploads/detection_results/stream_dose_detect_1.json'
-        detection_data = None
+        # 업로드된 파일명에서 확장자 제거
+        base_filename = os.path.splitext(original_filename)[0]
         
-        if os.path.exists(detection_path):
-            with open(detection_path, 'r', encoding='utf-8') as f:
-                detection_data = json.load(f)
+        # 매핑용 파일명에서 _숫자 패턴 제거 (예: 도면예시1_3 -> 도면예시1)
+        import re
+        clean_filename_for_mapping = re.sub(r'_\d+$', '', base_filename)
+        
+        # Detection 결과 파일들을 파일명으로 매핑하여 로드
+        detection_dir = 'uploads/detection_results'
+        detection_data = None
+        matched_detection_files = []
+        
+        if os.path.exists(detection_dir):
+            # detection_results 폴더의 모든 JSON 파일 확인
+            for detection_file in os.listdir(detection_dir):
+                if detection_file.endswith('.json'):
+                    detection_base = os.path.splitext(detection_file)[0]
+                    
+                    # 파일명이 일치하는 경우 (대소문자 무시, _숫자 제거된 이름으로 비교)
+                    if detection_base.lower() == clean_filename_for_mapping.lower():
+                        detection_path = os.path.join(detection_dir, detection_file)
+                        try:
+                            with open(detection_path, 'r', encoding='utf-8') as f:
+                                file_detection_data = json.load(f)
+                            matched_detection_files.append({
+                                'filename': detection_file,
+                                'data': file_detection_data
+                            })
+                        except Exception as e:
+                            print(f"Detection 파일 로드 오류 ({detection_file}): {e}")
+        
+        # 매칭된 detection 파일들을 하나로 통합
+        if matched_detection_files:
+            if len(matched_detection_files) == 1:
+                detection_data = matched_detection_files[0]['data']
+            else:
+                # 여러 detection 파일이 있는 경우 통합
+                detection_data = {
+                    "merged_detections": True,
+                    "source_files": [f['filename'] for f in matched_detection_files],
+                    "detections": []
+                }
+                for detection_file in matched_detection_files:
+                    if 'detections' in detection_file['data']:
+                        detection_data['detections'].extend(detection_file['data']['detections'])
+                    # 다른 필드들도 병합
+                    for key, value in detection_file['data'].items():
+                        if key not in detection_data and key != 'detections':
+                            detection_data[key] = value
+        else:
+            print(f"경고: '{clean_filename_for_mapping}' (원본: {base_filename})과 매칭되는 detection 파일을 찾을 수 없습니다.")
         
         # 이미지 크기 정보 추출
         width, height = extract_image_dimensions(image_path)
@@ -146,12 +190,21 @@ def create_integrated_json(image_path: str, ocr_result: Dict, original_filename:
         # 시퀀스 번호 생성
         sequence = get_next_testsum_sequence()
         
+        # 저장할 파일명은 매핑용과 동일하게 사용
+        clean_filename_for_save = clean_filename_for_mapping
+        
         # 통합 JSON 구조 생성
         integrated_data = {
             "source_filename": original_filename,
+            "base_filename": base_filename,
+            "clean_filename_for_save": clean_filename_for_save,
             "created_at": datetime.now().isoformat(),
             "width": width,
             "height": height,
+            "file_mapping": {
+                "matched_detection_files": len(matched_detection_files),
+                "detection_sources": [f['filename'] for f in matched_detection_files] if matched_detection_files else []
+            },
             "ocr_data": {
                 "label": "ocr",
                 **ocr_result
@@ -164,8 +217,8 @@ def create_integrated_json(image_path: str, ocr_result: Dict, original_filename:
         if not os.path.exists(merged_dir):
             os.makedirs(merged_dir)
         
-        # testsum{seq}.json 파일로 저장
-        merged_filename = f"testsum{sequence}.json"
+        # clean_filename_for_save를 사용하여 파일명 생성 (_merged 없이)
+        merged_filename = f"{clean_filename_for_save}.json"
         merged_path = os.path.join(merged_dir, merged_filename)
         
         with open(merged_path, 'w', encoding='utf-8') as f:

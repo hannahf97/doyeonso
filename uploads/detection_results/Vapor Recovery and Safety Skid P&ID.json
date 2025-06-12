@@ -1,0 +1,244 @@
+{
+  "label": "detecting",
+  "data": {
+      "boxes": [
+          {
+              "id": "1",
+              "label": "Centrifugal Pump",
+              "x": "1496.99",
+              "y": "343.46",
+              "width": "120.65",
+              "height": "100.26",
+              "confidence": null
+          },
+          {
+              "id": "2",
+              "label": "Centrifugal Pump",
+              "x": "1506.78",
+              "y": "725.45",
+              "width": "120.22",
+              "height": "110.90",
+              "confidence": null
+          },
+          {
+              "id": "3",
+              "label": "Centrifugal Pump",
+              "x": "1500.29",
+              "y": "1103.18",
+              "width": "120.57",
+              "height": "93.02",
+              "confidence": null
+          },
+          {
+              "id": "4",
+              "label": "gate valve",
+              "x": "1373.95",
+              "y": "341.28",
+              "width": "81.24",
+              "height": "49.22",
+              "confidence": null
+          },
+          {
+              "id": "6",
+              "label": "gate valve",
+              "x": "1372.19",
+              "y": "1098.99",
+              "width": "77.71",
+              "height": "51.32",
+              "confidence": null
+          },
+          {
+              "id": "7",
+              "label": "gate valve",
+              "x": "1229.99",
+              "y": "445.29",
+              "width": "59.97",
+              "height": "83.92",
+              "confidence": null
+          },
+          {
+              "id": "8",
+              "label": "gate valve",
+              "x": "216.59",
+              "y": "1317.96",
+              "width": "79.84",
+              "height": "49.26",
+              "confidence": null
+          },
+          {
+              "id": "A",
+              "label": "closed gate valve",
+              "x": "1115.48",
+              "y": "339.57",
+              "width": "67.54",
+              "height": "40.76",
+              "confidence": null
+          },
+          {
+              "id": "B",
+              "label": "Piston Operated Valve",
+              "x": "1644.90",
+              "y": "264.29",
+              "width": "110.16",
+              "height": "58.55",
+              "confidence": null
+          },
+          {
+              "id": "C",
+              "label": "Piston Operated Valve",
+              "x": "1807.42",
+              "y": "291.90",
+              "width": "75.76",
+              "height": "113.76",
+              "confidence": null
+          },
+          {
+              "id": "D",
+              "label": "Piston Operated Valve",
+              "x": "1643.39",
+              "y": "641.97",
+              "width": "120.82",
+              "height": "65.31",
+              "confidence": null
+          },
+          {
+              "id": "E",
+              "label": "Piston Operated Valve",
+              "x": "1808.24",
+              "y": "669.60",
+              "width": "84.31",
+              "height": "101.90",
+              "confidence": null
+          },
+          {
+              "id": "F",
+              "label": "Piston Operated Valve",
+              "x": "1643.40",
+              "y": "1019.51",
+              "width": "107.15",
+              "height": "55.19",
+              "confidence": null
+          },
+          {
+              "id": "G",
+              "label": "Piston Operated Valve",
+              "x": "1807.72",
+              "y": "1040.81",
+              "width": "83.26",
+              "height": "104.71",
+              "confidence": null
+          },
+          {
+              "id": "H",
+              "label": "gate valve",
+              "x": "1223.53",
+              "y": "997.80",
+              "width": "41.36",
+              "height": "57.34",
+              "confidence": null
+          },
+          {
+              "id": "I",
+              "label": "gate valve",
+              "x": "977.61",
+              "y": "1503.06",
+              "width": "44.08",
+              "height": "59.70",
+              "confidence": null
+          },
+          {
+              "id": "J",
+              "label": "reactor",
+              "x": "979.62",
+              "y": "1317.31",
+              "width": "123.01",
+              "height": "294.14",
+              "confidence": null
+          },
+          {
+              "id": "K",
+              "label": "Piston Operated Valve",
+              "x": "409.11",
+              "y": "1288.48",
+              "width": "57.08",
+              "height": "112.79",
+              "confidence": null
+          },
+          {
+              "id": "L",
+              "label": "open top tank",
+              "x": "509.84",
+              "y": "1322.69",
+              "width": "58.24",
+              "height": "57.53",
+              "confidence": null
+          },
+          {
+              "id": "M",
+              "label": "tubuler",
+              "x": "644.25",
+              "y": "1315.12",
+              "width": "118.25",
+              "height": "47.15",
+              "confidence": null
+          },
+          {
+              "id": "N",
+              "label": "pressure controller",
+              "x": "139.33",
+              "y": "1247.94",
+              "width": "88.37",
+              "height": "84.04",
+              "confidence": null
+          },
+          {
+              "id": "P",
+              "label": "tubuler",
+              "x": "1676.25",
+              "y": "553.75",
+              "width": "62.50",
+              "height": "97.50",
+              "confidence": null
+          },
+          {
+              "id": "Q",
+              "label": "tubuler",
+              "x": "1672.50",
+              "y": "932.50",
+              "width": "55.00",
+              "height": "100.00",
+              "confidence": null
+          },
+          {
+              "id": "5",
+              "label": "gate valve",
+              "x": "1370.43",
+              "y": "721.17",
+              "width": "80.86",
+              "height": "49.00",
+              "confidence": null
+          },
+          {
+              "id": "R",
+              "label": "analyzer indicator",
+              "x": "757.37",
+              "y": "1249.20",
+              "width": "72.42",
+              "height": "81.47",
+              "confidence": null
+          },
+          {
+              "id": "S",
+              "label": "tubuler",
+              "x": "1673.15",
+              "y": "179.53",
+              "width": "45.26",
+              "height": "96.56",
+              "confidence": null
+          }
+      ],
+      "height": 1606,
+      "key": "121.jpg",
+      "width": 2004
+  }
+}
