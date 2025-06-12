@@ -11,10 +11,14 @@ from sentence_transformers import SentenceTransformer
 from utils.rag_system_kiwi import RAGSystemWithKiwi
 from openai import OpenAI
 from loguru import logger
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 from dotenv import load_dotenv
 from config.database_config import get_db_connection
+# 이미지 처리를 위한 import 추가
+from PIL import Image, ImageDraw, ImageFont
+import io
+import base64
 
 # .env 파일 로드
 load_dotenv()
@@ -202,6 +206,12 @@ class PIDExpertChatbot:
     def _detect_query_type(self, query: str) -> str:
         """쿼리 유형 감지 - 도면 검색 기능 추가"""
         
+        # 도면 시각화 관련 키워드 확인
+        visualization_keywords = [
+            '분석해줘', '시각화', '그려줘', '보여줘', '표시해줘', 
+            'ocr', 'detection', '바운딩', '박스', '네모'
+        ]
+        
         # 도면 검색 관련 키워드 확인
         drawing_search_keywords = [
             '도면', '파일', '그림', 'pdf', 'stream', 'does', 'ai',
@@ -239,7 +249,17 @@ class PIDExpertChatbot:
         
         query_lower = query.lower()
         
-        # 도면 검색 키워드 우선 확인
+        # 도면 시각화 키워드 우선 확인 (도면명과 함께 사용된 경우)
+        has_drawing_ref = any(keyword in query for keyword in drawing_search_keywords)
+        has_viz_request = any(keyword in query for keyword in visualization_keywords)
+        
+        if has_drawing_ref and has_viz_request:
+            # 도면 이름 후보가 있는지 확인
+            drawing_candidates = self.extract_drawing_names_from_query(query)
+            if drawing_candidates:
+                return "drawing_visualization"
+        
+        # 도면 검색 키워드 확인
         if any(keyword in query for keyword in drawing_search_keywords):
             # 도면 이름 후보가 있는지 확인
             drawing_candidates = self.extract_drawing_names_from_query(query)
@@ -683,6 +703,36 @@ class PIDExpertChatbot:
                     latest_drawing = max(search_results, key=lambda x: x['latest_date'])
                     auto_selected_drawing = latest_drawing['d_name']
                     logger.info(f"🎯 최신 도면 자동 선택: {auto_selected_drawing}")
+            
+            elif query_type == "drawing_visualization":
+                logger.info(f"🎨 도면 시각화 모드로 처리: {user_query}")
+                
+                # 질문에서 도면 이름 후보 추출
+                drawing_candidates = self.extract_drawing_names_from_query(user_query)
+                
+                if drawing_candidates:
+                    # 첫 번째 후보로 시각화 시도
+                    candidate = drawing_candidates[0]
+                    
+                    # 도면 검색하여 존재 확인
+                    candidate_results = self.search_drawings_by_name(candidate)
+                    
+                    if candidate_results:
+                        # 최신 버전으로 시각화 수행
+                        auto_selected_drawing = candidate_results[0]['d_name']
+                        logger.info(f"🎨 시각화 대상 도면: {auto_selected_drawing}")
+                        
+                        # 직접 시각화 분석 수행
+                        viz_result = self.analyze_drawing_with_visualization(auto_selected_drawing, user_query)
+                        
+                        # 시각화가 성공한 경우 바로 반환
+                        if viz_result and viz_result.get('visualization'):
+                            return viz_result
+                        else:
+                            # 시각화 실패 시 일반 검색으로 폴백
+                            search_results = candidate_results
+                    else:
+                        logger.warning(f"⚠️ 시각화 요청된 도면 '{candidate}'를 찾을 수 없습니다")
             
             # 선택된 도면 우선순위: 자동 검색 > 사용자 선택
             final_selected_drawing = auto_selected_drawing or selected_drawing
@@ -1641,4 +1691,355 @@ class PIDExpertChatbot:
                 
         except Exception as e:
             logger.error(f"도면 검색 실패: {e}")
-            return [] 
+            return []
+
+    def visualize_drawing_analysis(self, d_name: str, version: str = "latest") -> Optional[Dict]:
+        """
+        도면 시각화 분석 - OCR과 Detection 결과를 이미지에 그려서 반환
+        
+        Args:
+            d_name: 도면 파일명
+            version: "latest" (최신) 또는 "previous" (이전) 또는 d_id
+        
+        Returns:
+            시각화된 이미지 정보와 분석 결과
+        """
+        try:
+            # 도면 데이터 조회
+            if version.isdigit():
+                drawing_data = self.get_drawing_data_by_id(int(version))
+            else:
+                drawing_data = self.get_drawing_data_from_db(d_name, version)
+            
+            if not drawing_data:
+                logger.error(f"도면 '{d_name}' ({version})을 찾을 수 없습니다")
+                return None
+            
+            # 이미지 경로 확인
+            image_path = drawing_data.get('image_path')
+            if not image_path or not os.path.exists(image_path):
+                logger.error(f"이미지 파일을 찾을 수 없습니다: {image_path}")
+                return None
+            
+            # JSON 데이터 확인
+            json_data = drawing_data.get('json_data')
+            if not json_data:
+                logger.error("JSON 데이터가 없습니다")
+                return None
+            
+            # 이미지 로드
+            original_image = Image.open(image_path)
+            
+            # JSON에서 예상 크기 가져오기
+            expected_width = json_data.get('width', original_image.width)
+            expected_height = json_data.get('height', original_image.height)
+            
+            # 이미지 크기 조정
+            if original_image.size != (expected_width, expected_height):
+                logger.info(f"이미지 크기 조정: {original_image.size} -> ({expected_width}, {expected_height})")
+                image = original_image.resize((expected_width, expected_height), Image.Resampling.LANCZOS)
+            else:
+                image = original_image.copy()
+            
+            # 그리기 객체 생성
+            draw = ImageDraw.Draw(image)
+            
+            # 폰트 설정 (기본 폰트 사용)
+            try:
+                font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 12)
+                small_font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 10)
+            except:
+                font = ImageFont.load_default()
+                small_font = ImageFont.load_default()
+            
+            # OCR 결과 그리기
+            ocr_count = 0
+            if 'ocr_data' in json_data and json_data['ocr_data']:
+                ocr_count = self._draw_ocr_results(draw, json_data['ocr_data'], font, small_font)
+            
+            # Detection 결과 그리기
+            detection_count = 0
+            if 'detection_data' in json_data and json_data['detection_data']:
+                detection_count = self._draw_detection_results(draw, json_data['detection_data'], font)
+            
+            # 이미지를 Base64로 인코딩
+            img_buffer = io.BytesIO()
+            image.save(img_buffer, format='PNG', quality=95)
+            img_base64 = base64.b64encode(img_buffer.getvalue()).decode()
+            
+            # 분석 결과 반환
+            result = {
+                'drawing_name': d_name,
+                'version': version,
+                'image_base64': img_base64,
+                'original_size': original_image.size,
+                'resized_size': (expected_width, expected_height),
+                'ocr_count': ocr_count,
+                'detection_count': detection_count,
+                'drawing_data': drawing_data,
+                'analysis_summary': f"OCR 텍스트 {ocr_count}개, Detection 객체 {detection_count}개 시각화 완료"
+            }
+            
+            logger.info(f"도면 시각화 완료: {d_name} - OCR {ocr_count}개, Detection {detection_count}개")
+            return result
+            
+        except Exception as e:
+            logger.error(f"도면 시각화 실패: {e}")
+            return None
+
+    def _draw_ocr_results(self, draw: ImageDraw.Draw, ocr_data: Dict, font, small_font) -> int:
+        """
+        OCR 결과를 이미지에 그리기
+        
+        Args:
+            draw: PIL ImageDraw 객체
+            ocr_data: OCR 데이터
+            font: 큰 폰트
+            small_font: 작은 폰트
+        
+        Returns:
+            그려진 OCR 텍스트 개수
+        """
+        count = 0
+        
+        if 'images' not in ocr_data:
+            return count
+        
+        for image_data in ocr_data['images']:
+            if 'fields' not in image_data:
+                continue
+                
+            for field in image_data['fields']:
+                try:
+                    # 텍스트 가져오기
+                    infer_text = field.get('inferText', '')
+                    if not infer_text:
+                        continue
+                    
+                    # 바운딩 박스 정보 가져오기
+                    bounding_poly = field.get('boundingPoly')
+                    if not bounding_poly or 'vertices' not in bounding_poly:
+                        continue
+                    
+                    vertices = bounding_poly['vertices']
+                    if len(vertices) < 4:
+                        continue
+                    
+                    # 좌표 추출 (왼쪽 위, 오른쪽 아래)
+                    x_coords = [v.get('x', 0) for v in vertices]
+                    y_coords = [v.get('y', 0) for v in vertices]
+                    
+                    x1, y1 = min(x_coords), min(y_coords)
+                    x2, y2 = max(x_coords), max(y_coords)
+                    
+                    # 바운딩 박스 그리기 (파란색)
+                    draw.rectangle([x1, y1, x2, y2], outline='blue', width=2)
+                    
+                    # 텍스트 레이블 그리기
+                    # 텍스트가 너무 길면 자르기
+                    display_text = infer_text[:20] + "..." if len(infer_text) > 20 else infer_text
+                    
+                    # 텍스트 배경 그리기
+                    text_bbox = draw.textbbox((x1, y1-15), display_text, font=small_font)
+                    draw.rectangle(text_bbox, fill='blue')
+                    draw.text((x1, y1-15), display_text, fill='white', font=small_font)
+                    
+                    count += 1
+                    
+                except Exception as e:
+                    logger.warning(f"OCR 필드 그리기 실패: {e}")
+                    continue
+        
+        return count
+
+    def _draw_detection_results(self, draw: ImageDraw.Draw, detection_data: Dict, font) -> int:
+        """
+        Detection 결과를 이미지에 그리기
+        
+        Args:
+            draw: PIL ImageDraw 객체
+            detection_data: Detection 데이터
+            font: 폰트
+        
+        Returns:
+            그려진 Detection 객체 개수
+        """
+        count = 0
+        
+        if 'detections' not in detection_data:
+            return count
+        
+        for detection in detection_data['detections']:
+            try:
+                # 라벨 정보
+                label = detection.get('label', 'Unknown')
+                confidence = detection.get('confidence', 0.0)
+                
+                # 바운딩 박스 정보 (중심점 기반)
+                bbox = detection.get('boundingBox')
+                if not bbox:
+                    continue
+                
+                center_x = bbox.get('x', 0)
+                center_y = bbox.get('y', 0)
+                width = bbox.get('width', 0)
+                height = bbox.get('height', 0)
+                
+                # 실제 좌표 계산 (중심점에서 좌상단, 우하단 좌표로)
+                x1 = center_x - width / 2
+                y1 = center_y - height / 2
+                x2 = center_x + width / 2
+                y2 = center_y + height / 2
+                
+                # 바운딩 박스 그리기 (빨간색)
+                draw.rectangle([x1, y1, x2, y2], outline='red', width=3)
+                
+                # 레이블과 신뢰도 표시
+                label_text = f"{label} ({confidence:.2f})"
+                
+                # 텍스트 배경 그리기
+                text_bbox = draw.textbbox((x1, y1-20), label_text, font=font)
+                draw.rectangle(text_bbox, fill='red')
+                draw.text((x1, y1-20), label_text, fill='white', font=font)
+                
+                count += 1
+                
+            except Exception as e:
+                logger.warning(f"Detection 객체 그리기 실패: {e}")
+                continue
+        
+        return count
+
+    def analyze_drawing_with_visualization(self, d_name: str, user_question: str = None) -> Dict:
+        """
+        도면 분석과 시각화를 통합하여 수행
+        
+        Args:
+            d_name: 도면 파일명
+            user_question: 사용자 질문 (선택사항)
+        
+        Returns:
+            분석 결과와 시각화 이미지가 포함된 응답
+        """
+        try:
+            # 도면 시각화 수행
+            viz_result = self.visualize_drawing_analysis(d_name)
+            
+            if not viz_result:
+                return {
+                    'response': f"❌ '{d_name}' 도면의 시각화에 실패했습니다.",
+                    'sources': [],
+                    'query_type': 'drawing_visualization',
+                    'context_quality': 'none',
+                    'web_search_used': False,
+                    'visualization': None
+                }
+            
+            # 도면 데이터로부터 텍스트 분석
+            drawing_data = viz_result['drawing_data']
+            extracted_text = self.extract_text_from_drawing_data(drawing_data)
+            
+            # AI 분석 프롬프트 생성
+            analysis_prompt = f"""당신은 P&ID 도면 분석 전문가입니다. 다음 도면을 분석하고 시각화 결과를 설명해주세요.
+
+**도면 정보:**
+- 파일명: {d_name}
+- 등록일: {drawing_data.get('create_date')}
+- 이미지 크기: {viz_result['original_size']} → {viz_result['resized_size']}
+- OCR 텍스트: {viz_result['ocr_count']}개
+- Detection 객체: {viz_result['detection_count']}개
+
+**추출된 텍스트:**
+{extracted_text if extracted_text else '텍스트 정보 없음'}
+
+**시각화 결과:**
+{viz_result['analysis_summary']}
+
+{"**사용자 질문:** " + user_question if user_question else ""}
+
+**분석 요청:**
+1. **도면 개요**: 이 도면의 주요 목적과 특징
+2. **OCR 분석**: 추출된 텍스트에서 발견된 주요 정보 (계측기 태그, 설비명 등)
+3. **Detection 분석**: 감지된 객체들의 특징과 배치
+4. **시각화 설명**: 파란색 박스(OCR)와 빨간색 박스(Detection)로 표시된 내용
+5. **종합 평가**: 도면의 완성도와 주요 특징점
+
+시각화된 이미지에서 파란색 박스는 OCR로 추출된 텍스트 영역이고, 빨간색 박스는 객체 인식 결과입니다."""
+
+            # OpenAI API 호출
+            if not self.client:
+                ai_response = "OpenAI API 키가 설정되지 않았습니다."
+            else:
+                try:
+                    response = self.client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {"role": "system", "content": "당신은 20년 경력의 P&ID 전문가입니다. 도면 분석과 시각화 결과를 전문적으로 해석합니다."},
+                            {"role": "user", "content": analysis_prompt}
+                        ],
+                        temperature=0.2,
+                        max_tokens=2000
+                    )
+                    
+                    ai_response = response.choices[0].message.content
+                    
+                except Exception as e:
+                    logger.error(f"OpenAI API 호출 실패: {e}")
+                    ai_response = f"AI 분석 중 오류가 발생했습니다: {str(e)}"
+            
+            # 최종 응답 구성
+            final_response = f"""📊 **도면 시각화 분석 결과**
+
+**📄 도면 정보:**
+- **파일명:** {d_name}
+- **등록일:** {drawing_data.get('create_date')}
+- **등록자:** {drawing_data.get('user')}
+
+**🖼️ 시각화 정보:**
+- **원본 크기:** {viz_result['original_size'][0]} × {viz_result['original_size'][1]}
+- **분석 크기:** {viz_result['resized_size'][0]} × {viz_result['resized_size'][1]}
+- **OCR 텍스트:** {viz_result['ocr_count']}개 (파란색 박스)
+- **Detection 객체:** {viz_result['detection_count']}개 (빨간색 박스)
+
+---
+
+{ai_response}
+
+---
+
+**📌 시각화 범례:**
+- 🔵 **파란색 박스**: OCR로 추출된 텍스트 영역
+- 🔴 **빨간색 박스**: AI가 감지한 객체 (계측기, 밸브, 배관 등)
+"""
+            
+            # 소스 정보 구성
+            sources = [{
+                'type': 'visualization',
+                'icon': '🎨',
+                'source': f'도면 시각화 - {d_name}',
+                'score': None,
+                'page': None,
+                'content_preview': f"OCR {viz_result['ocr_count']}개, Detection {viz_result['detection_count']}개 시각화",
+                'quality': 'high'
+            }]
+            
+            return {
+                'response': final_response,
+                'sources': sources,
+                'query_type': 'drawing_visualization',
+                'context_quality': 'high',
+                'web_search_used': False,
+                'visualization': viz_result,
+                'extracted_text_length': len(extracted_text)
+            }
+            
+        except Exception as e:
+            logger.error(f"도면 시각화 분석 실패: {e}")
+            return {
+                'response': f"도면 시각화 분석 중 오류가 발생했습니다: {str(e)}",
+                'sources': [],
+                'query_type': 'drawing_visualization',
+                'context_quality': 'none',
+                'web_search_used': False,
+                'visualization': None
+            }

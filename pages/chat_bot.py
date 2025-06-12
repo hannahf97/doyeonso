@@ -130,8 +130,8 @@ def show():
         if st.button("운전 절차", key="test_operation", use_container_width=True):
             _add_test_question("정상 운전 시작 절차와 주의사항을 설명해주세요.")
         
-        if st.button("문제 해결", key="test_troubleshoot", use_container_width=True):
-            _add_test_question("공정에서 자주 발생하는 문제와 해결 방법을 설명해주세요.")
+        if st.button("도면 시각화", key="test_visualization", use_container_width=True):
+            _add_test_question("stream_does_ai_1 도면을 시각화해서 분석해줘")
     
     st.markdown("---")
     
@@ -224,6 +224,11 @@ def show():
                     with st.expander("📚 참고 문서 출처"):
                         _display_sources(message["sources"], message.get("debug_info", {}))
                 
+                # 시각화 결과 표시 (있는 경우)
+                if "visualization" in message and message["visualization"]:
+                    with st.expander("🖼️ 도면 시각화 결과", expanded=True):
+                        _display_visualization(message["visualization"])
+                
                 # 디버그 정보 표시
                 if show_debug_info and "debug_info" in message:
                     debug = message["debug_info"]
@@ -262,6 +267,11 @@ def show():
                 with st.expander("📚 참고 문서 출처"):
                     _display_sources(response_data['sources'], response_data)
             
+            # 시각화 결과 표시 (있는 경우)
+            if response_data.get('visualization'):
+                with st.expander("🖼️ 도면 시각화 결과", expanded=True):
+                    _display_visualization(response_data['visualization'])
+            
             # 디버그 정보 표시
             if show_debug_info:
                 _display_debug_info(response_data)
@@ -278,6 +288,11 @@ def show():
                 "web_search_used": response_data.get('web_search_used', False)
             }
         }
+        
+        # 시각화 결과가 있으면 추가
+        if response_data.get('visualization'):
+            assistant_message["visualization"] = response_data['visualization']
+        
         st.session_state.messages.append(assistant_message)
         
         # 페이지 새로고침으로 새 메시지 표시
@@ -490,8 +505,18 @@ def _display_sources(sources, debug_info):
                 st.code(source.get('content_preview', 'N/A'), language='text')
             st.markdown("")  # 빈 줄 추가
     
+    # 시각화 소스 표시
+    visualization_sources = [s for s in sources if s.get('type') == 'visualization']
+    if visualization_sources:
+        st.markdown("### 🎨 시각화 소스")
+        for i, source in enumerate(visualization_sources, 1):
+            st.write(f"{source.get('icon', '🎨')} **{source.get('source', 'N/A')}**")
+            st.write(f"- **내용:** {source.get('content_preview', 'N/A')}")
+            st.write(f"- **품질:** {source.get('quality', 'N/A').upper()}")
+            st.markdown("")  # 빈 줄 추가
+    
     # 소스가 없는 경우
-    if not database_sources and not drawing_search_sources and not rag_sources and not web_sources:
+    if not database_sources and not drawing_search_sources and not rag_sources and not web_sources and not visualization_sources:
         st.info("📝 이 답변은 일반적인 P&ID 지식을 바탕으로 생성되었습니다.")
 
 def _display_debug_info(debug_info):
@@ -549,6 +574,58 @@ def _display_debug_info(debug_info):
             extra_info += " | 🔒 보안: RAG 전용"
         
         st.caption(extra_info)
+
+def _display_visualization(visualization_data):
+    """시각화 결과 표시 함수"""
+    if not visualization_data:
+        st.error("시각화 데이터가 없습니다.")
+        return
+    
+    # 기본 정보 표시
+    st.markdown("### 📊 시각화 정보")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("📄 도면명", visualization_data.get('drawing_name', 'N/A'))
+    with col2:
+        st.metric("🔢 OCR 텍스트", f"{visualization_data.get('ocr_count', 0)}개")
+    with col3:
+        st.metric("🎯 Detection", f"{visualization_data.get('detection_count', 0)}개")
+    with col4:
+        original_size = visualization_data.get('original_size', (0, 0))
+        st.metric("📐 이미지 크기", f"{original_size[0]}×{original_size[1]}")
+    
+    # 이미지 표시
+    if 'image_base64' in visualization_data:
+        st.markdown("### 🖼️ 분석된 도면")
+        
+        # Base64 이미지 표시
+        import base64
+        image_html = f'<img src="data:image/png;base64,{visualization_data["image_base64"]}" style="max-width: 100%; height: auto;" />'
+        st.markdown(image_html, unsafe_allow_html=True)
+        
+        # 범례 표시
+        st.markdown("### 📌 범례")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("🔵 **파란색 박스**: OCR 텍스트 영역")
+        with col2:
+            st.markdown("🔴 **빨간색 박스**: AI 감지 객체")
+        
+        # 상세 정보
+        with st.expander("📋 상세 분석 정보"):
+            resized_size = visualization_data.get('resized_size', (0, 0))
+            st.write(f"**원본 크기:** {original_size[0]} × {original_size[1]}")
+            st.write(f"**분석 크기:** {resized_size[0]} × {resized_size[1]}")
+            st.write(f"**분석 요약:** {visualization_data.get('analysis_summary', 'N/A')}")
+            
+            # 도면 데이터 정보
+            drawing_data = visualization_data.get('drawing_data', {})
+            if drawing_data:
+                st.write(f"**등록일:** {drawing_data.get('create_date', 'N/A')}")
+                st.write(f"**등록자:** {drawing_data.get('user', 'N/A')}")
+    else:
+        st.error("시각화된 이미지가 없습니다.")
 
 if __name__ == "__main__":
     show() 
