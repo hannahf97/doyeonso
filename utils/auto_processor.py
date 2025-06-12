@@ -71,12 +71,13 @@ def extract_image_dimensions(image_path: str) -> Tuple[int, int]:
         return 1684, 1190  # 기본값
 
 def convert_uploaded_file_to_images(file_bytes: bytes, original_filename: str) -> Dict[str, Any]:
-    """업로드된 파일을 PNG 이미지로 변환"""
+    """업로드된 파일을 PNG 이미지로 변환 (동일 파일명 시 덮어쓰기)"""
     
     result = {
         'success': False,
         'converted_images': [],
-        'error_message': None
+        'error_message': None,
+        'updated_files': []
     }
     
     try:
@@ -86,8 +87,8 @@ def convert_uploaded_file_to_images(file_bytes: bytes, original_filename: str) -
             os.makedirs(upload_dir)
         
         file_extension = original_filename.lower().split('.')[-1]
-        # 파일명 정리 (확장자 제거, _숫자 제거)
-        cleaned_filename = clean_filename(original_filename)
+        # 파일명에서 확장자만 제거 (숫자나 _ 제거하지 않음)
+        base_filename = os.path.splitext(original_filename)[0]
         
         if file_extension == 'pdf':
             # PDF 처리
@@ -95,11 +96,17 @@ def convert_uploaded_file_to_images(file_bytes: bytes, original_filename: str) -
                 images = convert_from_bytes(file_bytes, dpi=300)
                 for i, image in enumerate(images):
                     if len(images) > 1:
-                        filename = f"{cleaned_filename}_page_{i+1}.png"
+                        filename = f"{base_filename}_page_{i+1}.png"
                     else:
-                        filename = f"{cleaned_filename}.png"
+                        filename = f"{base_filename}.png"
                     
                     save_path = os.path.join(upload_dir, filename)
+                    
+                    # 기존 파일이 있으면 업데이트 표시
+                    if os.path.exists(save_path):
+                        result['updated_files'].append(save_path)
+                        print(f"🔄 기존 파일 업데이트: {filename}")
+                    
                     image.save(save_path, 'PNG')
                     result['converted_images'].append(save_path)
                 
@@ -117,8 +124,14 @@ def convert_uploaded_file_to_images(file_bytes: bytes, original_filename: str) -
                 if image.mode != 'RGB':
                     image = image.convert('RGB')
                 
-                filename = f"{cleaned_filename}.png"
+                filename = f"{base_filename}.png"
                 save_path = os.path.join(upload_dir, filename)
+                
+                # 기존 파일이 있으면 업데이트 표시
+                if os.path.exists(save_path):
+                    result['updated_files'].append(save_path)
+                    print(f"🔄 기존 파일 업데이트: {filename}")
+                
                 image.save(save_path, 'PNG')
                 result['converted_images'].append(save_path)
                 result['success'] = True
@@ -142,8 +155,7 @@ def create_integrated_json(image_path: str, ocr_result: Dict, original_filename:
     }
     
     try:
-        # 파일명 정리 (확장자 제거, _숫자 제거)
-        clean_filename_for_mapping = clean_filename(original_filename)
+        # 파일명에서 확장자만 제거 (숫자나 _ 제거하지 않음)
         base_filename = os.path.splitext(original_filename)[0]
         
         # Detection 결과 파일들을 파일명으로 매핑하여 로드
@@ -157,8 +169,8 @@ def create_integrated_json(image_path: str, ocr_result: Dict, original_filename:
                 if detection_file.endswith('.json'):
                     detection_base = os.path.splitext(detection_file)[0]
                     
-                    # 파일명이 일치하는 경우 (대소문자 무시, _숫자 제거된 이름으로 비교)
-                    if detection_base.lower() == clean_filename_for_mapping.lower():
+                    # 파일명이 일치하는 경우 (대소문자 무시, 확장자만 제거해서 비교)
+                    if detection_base.lower() == base_filename.lower():
                         detection_path = os.path.join(detection_dir, detection_file)
                         try:
                             with open(detection_path, 'r', encoding='utf-8') as f:
@@ -189,7 +201,7 @@ def create_integrated_json(image_path: str, ocr_result: Dict, original_filename:
                         if key not in detection_data and key != 'detections':
                             detection_data[key] = value
         else:
-            print(f"경고: '{clean_filename_for_mapping}' (원본: {base_filename})과 매칭되는 detection 파일을 찾을 수 없습니다.")
+            print(f"경고: '{base_filename}'과 매칭되는 detection 파일을 찾을 수 없습니다.")
         
         # 이미지 크기 정보 추출
         width, height = extract_image_dimensions(image_path)
@@ -210,11 +222,25 @@ def create_integrated_json(image_path: str, ocr_result: Dict, original_filename:
         # 시퀀스 번호 생성
         sequence = get_next_testsum_sequence()
         
-        # 저장할 파일명은 매핑용과 동일하게 사용
-        clean_filename_for_save = clean_filename_for_mapping
+        # 저장할 파일명은 base_filename 사용 (확장자만 제거)
+        clean_filename_for_save = base_filename
         
-        # 통합 JSON 구조 생성
-        integrated_data = {
+        # 통합 JSON 구조 생성 (중첩 구조)
+        integrated_data = {}
+        
+        # 1. OCR 데이터를 "ocr" 객체 안에 배치
+        if ocr_result:
+            integrated_data["ocr"] = {
+                "label": "ocr",
+                **ocr_result
+            }
+        
+        # 2. Detection 데이터를 "detecting" 객체 안에 배치
+        if detection_data:
+            integrated_data["detecting"] = detection_data
+        
+        # 3. 메타데이터는 최상위 레벨에 추가
+        integrated_data.update({
             "source_filename": original_filename,
             "base_filename": base_filename,
             "clean_filename_for_save": clean_filename_for_save,
@@ -224,13 +250,8 @@ def create_integrated_json(image_path: str, ocr_result: Dict, original_filename:
             "file_mapping": {
                 "matched_detection_files": len(matched_detection_files),
                 "detection_sources": [f['filename'] for f in matched_detection_files] if matched_detection_files else []
-            },
-            "ocr_data": {
-                "label": "ocr",
-                **ocr_result
-            } if ocr_result else None,
-            "detection_data": detection_data
-        }
+            }
+        })
         
         # merged_results 디렉토리 생성
         merged_dir = 'uploads/merged_results'
@@ -240,6 +261,10 @@ def create_integrated_json(image_path: str, ocr_result: Dict, original_filename:
         # clean_filename_for_save를 사용하여 파일명 생성 (_merged 없이)
         merged_filename = f"{clean_filename_for_save}.json"
         merged_path = os.path.join(merged_dir, merged_filename)
+        
+        # 기존 파일이 있으면 업데이트 표시
+        if os.path.exists(merged_path):
+            print(f"🔄 기존 통합 JSON 업데이트: {merged_filename}")
         
         with open(merged_path, 'w', encoding='utf-8') as f:
             json.dump(integrated_data, f, ensure_ascii=False, indent=2)
@@ -257,12 +282,13 @@ def create_integrated_json(image_path: str, ocr_result: Dict, original_filename:
     return result
 
 def save_to_database(integrated_data: Dict, image_path: str, original_filename: str) -> Dict[str, Any]:
-    """통합 데이터를 PostgreSQL 데이터베이스에 저장"""
+    """통합 데이터를 PostgreSQL 데이터베이스에 저장 (동일 파일명 시 업데이트)"""
     
     result = {
         'success': False,
         'db_id': None,
-        'error_message': None
+        'error_message': None,
+        'is_update': False
     }
     
     try:
@@ -273,27 +299,51 @@ def save_to_database(integrated_data: Dict, image_path: str, original_filename: 
         
         cursor = conn.cursor()
         
-        # domyun 테이블에 삽입
-        insert_query = """
-        INSERT INTO domyun (d_name, "user", create_date, json_data, image_path)
-        VALUES (%s, %s, %s, %s, %s)
-        RETURNING d_id;
+        # 데이터베이스에 저장할 때는 확장자만 제거한 파일명 사용
+        base_filename = os.path.splitext(original_filename)[0]
+        
+        # 기존 레코드 확인
+        check_query = """
+        SELECT d_id FROM domyun WHERE d_name = %s AND "user" = %s;
         """
+        cursor.execute(check_query, (base_filename, USER_NAME))
+        existing_record = cursor.fetchone()
         
-        # 데이터베이스에 저장할 때도 정리된 파일명 사용
-        cleaned_db_filename = clean_filename(original_filename)
+        if existing_record:
+            # 기존 레코드 업데이트
+            update_query = """
+            UPDATE domyun 
+            SET create_date = %s, json_data = %s, image_path = %s
+            WHERE d_id = %s
+            RETURNING d_id;
+            """
+            cursor.execute(update_query, (
+                datetime.now(),
+                json.dumps(integrated_data, ensure_ascii=False),
+                image_path,
+                existing_record[0]
+            ))
+            db_id = cursor.fetchone()[0]
+            result['is_update'] = True
+            print(f"🔄 기존 데이터베이스 레코드 업데이트: ID {db_id}")
+        else:
+            # 새 레코드 삽입
+            insert_query = """
+            INSERT INTO domyun (d_name, "user", create_date, json_data, image_path)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING d_id;
+            """
+            cursor.execute(insert_query, (
+                base_filename,
+                USER_NAME,
+                datetime.now(),
+                json.dumps(integrated_data, ensure_ascii=False),
+                image_path
+            ))
+            db_id = cursor.fetchone()[0]
+            print(f"✅ 새 데이터베이스 레코드 생성: ID {db_id}")
         
-        cursor.execute(insert_query, (
-            cleaned_db_filename,
-            USER_NAME,  # config/user_config.py 에서 설정한 사용자 이름 사용
-            datetime.now(),
-            json.dumps(integrated_data, ensure_ascii=False),
-            image_path
-        ))
-        
-        db_id = cursor.fetchone()[0]
         conn.commit()
-        
         cursor.close()
         conn.close()
         

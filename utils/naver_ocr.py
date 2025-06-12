@@ -90,7 +90,7 @@ def call_naver_ocr_api(image_path):
 
 def save_ocr_result_to_json(ocr_result, image_path):
     """
-    OCR 결과를 JSON 파일로 저장 (label: "ocr" 추가)
+    OCR 결과를 JSON 파일로 저장 (label: "ocr" 추가, 동일 파일명 시 덮어쓰기)
     
     Args:
         ocr_result: OCR API 응답 결과
@@ -110,13 +110,17 @@ def save_ocr_result_to_json(ocr_result, image_path):
         base_name = os.path.splitext(image_filename)[0]
         json_file_path = os.path.join(ocr_dir, f"{base_name}.json")
         
+        # 기존 파일이 있으면 업데이트 표시
+        if os.path.exists(json_file_path):
+            print(f"🔄 기존 OCR 결과 업데이트: {base_name}.json")
+        
         # 기존 OCR 결과에 label 추가
         enhanced_ocr_result = {
             "label": "ocr",
             **ocr_result  # 기존 OCR 결과의 모든 데이터를 그대로 유지
         }
         
-        # JSON 파일로 저장
+        # JSON 파일로 저장 (덮어쓰기)
         with open(json_file_path, 'w', encoding='utf-8') as json_file:
             json.dump(enhanced_ocr_result, json_file, ensure_ascii=False, indent=2)
         
