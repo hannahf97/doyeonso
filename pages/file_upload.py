@@ -181,6 +181,15 @@ def show():
         margin-right: 10px;
     }
     
+    /* 타이틀 이미지 스타일 */
+    .title-image {
+        width: 266px;  
+        height: auto;
+        margin: 0;
+        display: block;
+        margin-bottom: 0; 
+    }
+    
     /* 반응형 디자인 */
     @media (max-width: 768px) {
         .title-korean {
@@ -196,12 +205,12 @@ def show():
     
 
     
-    # 제목 섹션
-    st.markdown("""
-    <div class="title-section">
-        <img src="data:image/svg+xml;base64,{}" style="max-width: 400px; height: auto; margin-left: -950px;">
-    </div>
-    """.format(get_base64_encoded_svg("assets/img/file_upload_title.svg") or ""), unsafe_allow_html=True)
+    # 타이틀 SVG 로드 및 표시
+    title_svg = get_base64_encoded_svg("assets/img/file_upload_title.svg")
+    if title_svg:
+        st.markdown(f"""
+            <img src="data:image/svg+xml;base64,{title_svg}" class="title-image" alt="File Upload Title">
+        """, unsafe_allow_html=True)
     
     # 파일 업로드 위젯 (스타일링된)
     st.markdown("""
