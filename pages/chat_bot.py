@@ -382,6 +382,7 @@ def _display_sources(sources, debug_info):
     
     # 소스 타입별 분류
     database_sources = [s for s in sources if s.get('type') == 'database']
+    drawing_search_sources = [s for s in sources if s.get('type') == 'drawing_search']
     rag_sources = [s for s in sources if s.get('type') == 'rag']
     web_sources = [s for s in sources if s.get('type') == 'web']
     
@@ -393,15 +394,35 @@ def _display_sources(sources, debug_info):
     with col1:
         st.metric("🗄️ 데이터베이스", len(database_sources))
     with col2:
-        st.metric("📖 RAG 소스", len(rag_sources))
+        st.metric("🔍 도면 검색", len(drawing_search_sources))
     with col3:
-        st.metric("🌐 웹 소스", len(web_sources))
+        st.metric("📖 RAG 소스", len(rag_sources))
     with col4:
-        st.metric("🎯 유사도 임계값", f"{threshold}")
+        st.metric("🌐 웹 소스", len(web_sources))
+    
+    # 추가 통계 행
+    if threshold:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("🎯 유사도 임계값", f"{threshold}")
+        with col2:
+            total_sources = len(database_sources) + len(drawing_search_sources) + len(rag_sources) + len(web_sources)
+            st.metric("📊 총 소스 수", total_sources)
     
     st.markdown("---")
     
-    # 데이터베이스 소스 표시 (최우선)
+    # 도면 검색 결과 표시 (최우선)
+    if drawing_search_sources:
+        st.markdown("### 🔍 도면 검색 결과")
+        for i, source in enumerate(drawing_search_sources, 1):
+            st.write(f"{source.get('icon', '🔍')} **{source.get('source', 'N/A')}**")
+            
+            st.markdown(f"**🔸 검색 결과 {i}:**")
+            st.write(f"- **정보:** {source.get('content_preview', 'N/A')}")
+            st.write(f"- **품질:** {source.get('quality', 'N/A').upper()}")
+            st.markdown("")  # 빈 줄 추가
+    
+    # 데이터베이스 소스 표시
     if database_sources:
         st.markdown("### 🗄️ 데이터베이스 소스 (선택된 도면)")
         for i, source in enumerate(database_sources, 1):
@@ -470,7 +491,7 @@ def _display_sources(sources, debug_info):
             st.markdown("")  # 빈 줄 추가
     
     # 소스가 없는 경우
-    if not database_sources and not rag_sources and not web_sources:
+    if not database_sources and not drawing_search_sources and not rag_sources and not web_sources:
         st.info("📝 이 답변은 일반적인 P&ID 지식을 바탕으로 생성되었습니다.")
 
 def _display_debug_info(debug_info):

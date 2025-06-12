@@ -200,7 +200,13 @@ class PIDExpertChatbot:
         return system_prompt
 
     def _detect_query_type(self, query: str) -> str:
-        """쿼리 유형 감지 - 변경 분석 강화 및 내부 데이터 분류 추가"""
+        """쿼리 유형 감지 - 도면 검색 기능 추가"""
+        
+        # 도면 검색 관련 키워드 확인
+        drawing_search_keywords = [
+            '도면', '파일', '그림', 'pdf', 'stream', 'does', 'ai',
+            '찾아', '검색', '보여', '알려', '어디', '있나', '무엇'
+        ]
         
         # 내부/기밀 데이터 관련 키워드 (웹 검색 금지)
         internal_keywords = [
@@ -233,7 +239,14 @@ class PIDExpertChatbot:
         
         query_lower = query.lower()
         
-        # 내부 데이터 키워드 우선 확인 (웹 검색 금지)
+        # 도면 검색 키워드 우선 확인
+        if any(keyword in query for keyword in drawing_search_keywords):
+            # 도면 이름 후보가 있는지 확인
+            drawing_candidates = self.extract_drawing_names_from_query(query)
+            if drawing_candidates:
+                return "drawing_search"
+        
+        # 내부 데이터 키워드 확인 (웹 검색 금지)
         if any(keyword in query for keyword in internal_keywords):
             return "internal_data"
         
@@ -641,6 +654,39 @@ class PIDExpertChatbot:
             # 쿼리 유형 감지
             query_type = self._detect_query_type(user_query)
             
+            # 도면 검색 처리
+            search_results = []
+            auto_selected_drawing = None
+            
+            if query_type == "drawing_search":
+                logger.info(f"🔍 도면 검색 모드로 처리: {user_query}")
+                
+                # 질문에서 도면 이름 후보 추출
+                drawing_candidates = self.extract_drawing_names_from_query(user_query)
+                
+                for candidate in drawing_candidates:
+                    results = self.search_drawings_by_name(candidate)
+                    search_results.extend(results)
+                
+                # 중복 제거
+                unique_results = {}
+                for result in search_results:
+                    unique_results[result['d_name']] = result
+                search_results = list(unique_results.values())
+                
+                # 검색 결과가 1개인 경우 자동 선택
+                if len(search_results) == 1:
+                    auto_selected_drawing = search_results[0]['d_name']
+                    logger.info(f"🎯 자동 도면 선택: {auto_selected_drawing}")
+                elif len(search_results) > 1:
+                    # 가장 최근 수정된 도면 우선 선택
+                    latest_drawing = max(search_results, key=lambda x: x['latest_date'])
+                    auto_selected_drawing = latest_drawing['d_name']
+                    logger.info(f"🎯 최신 도면 자동 선택: {auto_selected_drawing}")
+            
+            # 선택된 도면 우선순위: 자동 검색 > 사용자 선택
+            final_selected_drawing = auto_selected_drawing or selected_drawing
+            
             # RAG 검색 수행
             if query_type == "change_analysis":
                 logger.info(f"🔄 변경 분석 모드로 처리: {user_query}")
@@ -665,33 +711,49 @@ class PIDExpertChatbot:
             web_search_used = False
             web_search_results = ""
             
+            # 도면 검색 결과 소스 추가
+            if search_results:
+                for result in search_results:
+                    sources.append({
+                        'type': 'drawing_search',
+                        'icon': '🔍',
+                        'source': f'도면 검색 결과 - {result["d_name"]}',
+                        'score': None,
+                        'page': None,
+                        'content_preview': f"버전: {result['version_count']}개, 최종수정: {result['latest_date']}, 등록자: {result['users']}",
+                        'quality': 'high'
+                    })
+            
             # 선택된 도면 정보 추가
             drawing_context = ""
-            if selected_drawing and selected_drawing != "선택하지 않음":
-                logger.info(f"📄 선택된 도면 정보 활용: {selected_drawing}")
+            if final_selected_drawing and final_selected_drawing != "선택하지 않음":
+                logger.info(f"📄 선택된 도면 정보 활용: {final_selected_drawing}")
                 
                 try:
                     # 최신 버전의 도면 데이터 조회
-                    drawing_data = self.get_drawing_data_from_db(selected_drawing, "latest")
+                    drawing_data = self.get_drawing_data_from_db(final_selected_drawing, "latest")
                     
                     if drawing_data:
                         drawing_context = self.build_drawing_context(drawing_data, "선택된 도면")
                         
-                        # 도면 소스 정보 추가
-                        sources.append({
-                            'type': 'database',
-                            'icon': '🗄️',
-                            'source': f'선택된 도면 - {selected_drawing}',
-                            'score': None,
-                            'page': None,
-                            'content_preview': f"등록일: {drawing_data.get('create_date')}, 등록자: {drawing_data.get('user')}",
-                            'quality': 'high'
-                        })
+                        # 도면 소스 정보 추가 (중복 체크)
+                        existing_drawing_sources = [s for s in sources if s.get('type') == 'database' and final_selected_drawing in s.get('source', '')]
                         
-                        logger.info(f"✅ 선택된 도면 데이터 조회 성공: {selected_drawing}")
+                        if not existing_drawing_sources:
+                            sources.append({
+                                'type': 'database',
+                                'icon': '🗄️',
+                                'source': f'선택된 도면 - {final_selected_drawing}',
+                                'score': None,
+                                'page': None,
+                                'content_preview': f"등록일: {drawing_data.get('create_date')}, 등록자: {drawing_data.get('user')}",
+                                'quality': 'high'
+                            })
+                        
+                        logger.info(f"✅ 선택된 도면 데이터 조회 성공: {final_selected_drawing}")
                     else:
-                        logger.warning(f"⚠️ 선택된 도면 데이터 조회 실패: {selected_drawing}")
-                        drawing_context = f"\n\n⚠️ 선택된 도면 '{selected_drawing}'의 데이터를 찾을 수 없습니다.\n"
+                        logger.warning(f"⚠️ 선택된 도면 데이터 조회 실패: {final_selected_drawing}")
+                        drawing_context = f"\n\n⚠️ 선택된 도면 '{final_selected_drawing}'의 데이터를 찾을 수 없습니다.\n"
                         
                 except Exception as e:
                     logger.error(f"선택된 도면 조회 중 오류: {e}")
@@ -730,7 +792,7 @@ class PIDExpertChatbot:
             
             # 고품질 RAG 데이터가 없거나 부족한 경우 웹 검색 시도
             # 단, internal_data 타입은 웹 검색 금지
-            if (not high_quality_chunks or len(high_quality_chunks) < 2) and query_type != "internal_data":
+            if (not high_quality_chunks or len(high_quality_chunks) < 2) and query_type not in ["internal_data", "drawing_search"]:
                 logger.info(f"🌐 RAG 데이터 부족 (고품질: {len(high_quality_chunks)}개) - 웹 검색 시도")
                 
                 try:
@@ -778,11 +840,17 @@ class PIDExpertChatbot:
                     web_search_results = ""
             elif query_type == "internal_data":
                 logger.info(f"🔒 내부 데이터 질문 - 웹 검색 스킵 (RAG 전용)")
+            elif query_type == "drawing_search":
+                logger.info(f"🔍 도면 검색 질문 - 웹 검색 스킵 (데이터베이스 전용)")
             else:
                 logger.info(f"📖 RAG 데이터 충분 (고품질: {len(high_quality_chunks)}개) - 웹 검색 불필요")
             
             # 프롬프트 생성
-            if query_type == "change_analysis":
+            if query_type == "drawing_search":
+                system_prompt = self.create_drawing_search_prompt(user_query, search_results, rag_context)
+                max_tokens = 1800
+                temperature = 0.2
+            elif query_type == "change_analysis":
                 system_prompt = self.create_change_analysis_prompt(user_query, rag_context)
                 max_tokens = 2000
                 temperature = 0.2
@@ -796,7 +864,7 @@ class PIDExpertChatbot:
                 temperature = 0.3
             
             # 선택된 도면 정보가 있으면 시스템 프롬프트에 추가
-            if drawing_context:
+            if drawing_context and query_type != "drawing_search":
                 system_prompt += f"""
 
 **선택된 도면 정보:**
@@ -814,7 +882,7 @@ class PIDExpertChatbot:
 위 웹 검색 정보도 참고하여 최신 동향과 실무 정보를 포함한 종합적인 답변을 제공해주세요."""
 
             # 컨텍스트 품질 평가
-            if drawing_context or high_quality_chunks:
+            if drawing_context or high_quality_chunks or search_results:
                 context_quality = "high"
             elif low_quality_chunks or web_search_results:
                 context_quality = "medium"
@@ -830,7 +898,8 @@ class PIDExpertChatbot:
                     'context_quality': context_quality,
                     'web_search_used': web_search_used,
                     'similarity_threshold': SIMILARITY_THRESHOLD,
-                    'selected_drawing': selected_drawing
+                    'selected_drawing': final_selected_drawing,
+                    'search_results': search_results
                 }
             
             try:
@@ -851,13 +920,17 @@ class PIDExpertChatbot:
                 if source_info:
                     ai_response += f"\n\n{source_info}"
                 
-                # 변경 분석인 경우 특별 표시
-                if query_type == "change_analysis":
+                # 특별 모드 표시
+                if query_type == "drawing_search":
+                    ai_response = f"🔍 **도면 검색 모드** (발견: {len(search_results)}개)\n\n" + ai_response
+                elif query_type == "change_analysis":
                     ai_response = "🔄 **변경 분석 모드**\n\n" + ai_response
                 
-                # 선택된 도면이 있는 경우 표시
-                if selected_drawing and selected_drawing != "선택하지 않음":
-                    ai_response = f"📄 **분석 기준 도면: {selected_drawing}**\n\n" + ai_response
+                # 자동 선택된 도면이 있는 경우 표시
+                if auto_selected_drawing:
+                    ai_response = f"🎯 **자동 선택된 도면: {auto_selected_drawing}**\n\n" + ai_response
+                elif final_selected_drawing and final_selected_drawing != "선택하지 않음":
+                    ai_response = f"📄 **분석 기준 도면: {final_selected_drawing}**\n\n" + ai_response
                 
             except Exception as e:
                 logger.error(f"OpenAI API 호출 실패: {e}")
@@ -873,7 +946,8 @@ class PIDExpertChatbot:
                 'sources_count': len(sources),
                 'web_search_used': web_search_used,
                 'similarity_threshold': SIMILARITY_THRESHOLD,
-                'selected_drawing': selected_drawing
+                'selected_drawing': final_selected_drawing,
+                'search_results_count': len(search_results)
             })
             
             return {
@@ -885,8 +959,10 @@ class PIDExpertChatbot:
                 'similarity_threshold': SIMILARITY_THRESHOLD,
                 'high_quality_sources': len(high_quality_chunks),
                 'low_quality_sources': len(low_quality_chunks),
-                'selected_drawing': selected_drawing,
-                'drawing_context_used': bool(drawing_context)
+                'selected_drawing': final_selected_drawing,
+                'drawing_context_used': bool(drawing_context),
+                'search_results': search_results,
+                'auto_selected_drawing': auto_selected_drawing
             }
             
         except Exception as e:
@@ -898,7 +974,8 @@ class PIDExpertChatbot:
                 'context_quality': 'none',
                 'web_search_used': False,
                 'similarity_threshold': 0.4,
-                'selected_drawing': selected_drawing
+                'selected_drawing': selected_drawing,
+                'search_results': []
             }
 
     def _build_source_summary(self, sources: List[Dict], threshold: float) -> str:
@@ -1297,4 +1374,271 @@ class PIDExpertChatbot:
                 
         except Exception as e:
             logger.error(f"데이터베이스 조회 실패: {e}")
-            return None 
+            return None
+
+    def search_drawings_by_name(self, search_term: str) -> List[Dict]:
+        """
+        도면 이름으로 LIKE 검색을 수행
+        
+        Args:
+            search_term: 검색할 도면 이름 (부분 검색 가능)
+        
+        Returns:
+            검색된 도면 정보 리스트 (최신순)
+        """
+        try:
+            conn = get_db_connection()
+            if not conn:
+                logger.error("데이터베이스 연결 실패")
+                return []
+            
+            cursor = conn.cursor()
+            
+            # LIKE 검색 쿼리 (대소문자 구분 없이)
+            query = """
+            SELECT DISTINCT d_name,
+                   COUNT(*) as version_count,
+                   MAX(create_date) as latest_date,
+                   STRING_AGG(DISTINCT "user", ', ') as users
+            FROM domyun 
+            WHERE LOWER(d_name) LIKE LOWER(%s)
+            GROUP BY d_name
+            ORDER BY latest_date DESC
+            """
+            
+            search_pattern = f"%{search_term}%"
+            cursor.execute(query, (search_pattern,))
+            results = cursor.fetchall()
+            
+            cursor.close()
+            conn.close()
+            
+            # 결과를 딕셔너리 리스트로 변환
+            drawings = []
+            for d_name, version_count, latest_date, users in results:
+                drawings.append({
+                    'd_name': d_name,
+                    'version_count': version_count,
+                    'latest_date': latest_date,
+                    'users': users
+                })
+            
+            logger.info(f"도면 검색 '{search_term}': {len(drawings)}개 결과")
+            return drawings
+                
+        except Exception as e:
+            logger.error(f"도면 검색 실패: {e}")
+            return []
+
+    def extract_drawing_names_from_query(self, query: str) -> List[str]:
+        """
+        사용자 질문에서 도면 이름 후보를 추출
+        
+        Args:
+            query: 사용자 질문
+        
+        Returns:
+            추출된 도면 이름 후보 리스트
+        """
+        import re
+        
+        # 도면 이름 패턴들
+        drawing_patterns = [
+            r'([a-zA-Z0-9_\-]+\.(?:pdf|png|jpg|jpeg))',  # 확장자 포함 파일명
+            r'([a-zA-Z0-9_\-]{3,})',  # 3자리 이상 영숫자+언더스코어
+            r'([가-힣]{2,})',  # 2자리 이상 한글
+        ]
+        
+        # 도면 관련 키워드가 포함된 경우만 처리
+        drawing_keywords = ['도면', '파일', '그림', 'pdf', 'stream', 'does', 'ai']
+        has_drawing_keyword = any(keyword.lower() in query.lower() for keyword in drawing_keywords)
+        
+        if not has_drawing_keyword:
+            return []
+        
+        candidates = set()
+        
+        # 각 패턴으로 후보 추출
+        for pattern in drawing_patterns:
+            matches = re.findall(pattern, query, re.IGNORECASE)
+            candidates.update(matches)
+        
+        # 따옴표나 괄호로 감싼 텍스트 추출
+        quoted_patterns = [
+            r'"([^"]+)"',  # 큰따옴표
+            r"'([^']+)'",  # 작은따옴표
+            r'\(([^)]+)\)',  # 괄호
+        ]
+        
+        for pattern in quoted_patterns:
+            matches = re.findall(pattern, query)
+            candidates.update(matches)
+        
+        # 너무 짧거나 긴 후보 필터링
+        filtered_candidates = []
+        for candidate in candidates:
+            candidate = candidate.strip()
+            if 2 <= len(candidate) <= 50 and candidate not in ['도면', '파일', '그림']:
+                filtered_candidates.append(candidate)
+        
+        return list(filtered_candidates)
+
+    def create_drawing_search_prompt(self, user_question, search_results, rag_context):
+        """도면 검색 전용 프롬프트 생성"""
+        
+        drawing_search_persona = """당신은 20년 경력의 P&ID 도면 관리 전문가입니다.
+
+**전문 분야:**
+- P&ID 도면 데이터베이스 검색 및 관리
+- 도면 정보 분석 및 추천
+- 사용자 요구사항에 맞는 도면 식별
+- 도면 버전 관리 및 이력 추적
+
+**검색 분석 접근법:**
+1. **검색 결과 평가**: 찾은 도면들의 관련성 및 적합성 분석
+2. **도면 정보 제공**: 각 도면의 특징과 버전 정보 설명
+3. **추천 및 안내**: 사용자 질문에 가장 적합한 도면 추천
+4. **추가 정보**: 필요한 경우 관련 도면이나 추가 검색 제안
+
+**답변 구조:**
+1. **검색 결과 요약** (찾은 도면 수와 주요 결과)
+2. **도면별 상세 정보** (이름, 버전, 등록자, 날짜)
+3. **추천 도면** (질문에 가장 적합한 도면)
+4. **추가 안내** (관련 정보나 다음 단계 제안)"""
+
+        # 검색 결과 정보 구성
+        search_info = ""
+        if search_results:
+            search_info = f"**검색 결과 ({len(search_results)}개 도면 발견):**\n\n"
+            for i, result in enumerate(search_results, 1):
+                search_info += f"{i}. **{result['d_name']}**\n"
+                search_info += f"   - 버전 수: {result['version_count']}개\n"
+                search_info += f"   - 최종 수정: {result['latest_date']}\n"
+                search_info += f"   - 등록자: {result['users']}\n\n"
+        else:
+            search_info = "**검색 결과:** 조건에 맞는 도면을 찾을 수 없습니다.\n\n"
+
+        # 전체 프롬프트 구성
+        system_prompt = f"""{drawing_search_persona}
+
+**사용자 질문:**
+{user_question}
+
+**도면 검색 결과:**
+{search_info}
+
+**참고 문서 정보:**
+{rag_context}
+
+사용자가 도면에 대해 질문했습니다. 도면 검색 전문가로서 다음 사항을 중점적으로 분석해주세요:
+
+- 검색된 도면들의 특징과 차이점
+- 사용자 질문에 가장 적합한 도면 추천
+- 각 도면의 버전 및 이력 정보
+- 필요한 경우 추가 검색이나 관련 도면 제안
+
+검색 결과를 바탕으로 전문적이고 실용적인 도면 정보를 제공해주세요."""
+
+        return system_prompt
+
+    def get_drawing_data_by_id(self, d_id: int) -> Optional[Dict]:
+        """
+        d_id로 특정 도면 데이터를 조회
+        
+        Args:
+            d_id: 도면 ID
+        
+        Returns:
+            도면 데이터 또는 None
+        """
+        try:
+            conn = get_db_connection()
+            if not conn:
+                logger.error("데이터베이스 연결 실패")
+                return None
+            
+            cursor = conn.cursor()
+            
+            query = """
+            SELECT d_id, d_name, "user", create_date, json_data, image_path
+            FROM domyun 
+            WHERE d_id = %s
+            """
+            
+            cursor.execute(query, (d_id,))
+            result = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
+            
+            if result:
+                d_id, d_name, user, create_date, json_data, image_path = result
+                return {
+                    'd_id': d_id,
+                    'd_name': d_name,
+                    'user': user,
+                    'create_date': create_date,
+                    'json_data': json_data,
+                    'image_path': image_path
+                }
+            else:
+                logger.warning(f"도면 ID '{d_id}'를 찾을 수 없습니다")
+                return None
+                
+        except Exception as e:
+            logger.error(f"데이터베이스 조회 실패: {e}")
+            return None
+
+    def search_drawings_by_name(self, search_term: str) -> List[Dict]:
+        """
+        도면 이름으로 LIKE 검색을 수행
+        
+        Args:
+            search_term: 검색할 도면 이름 (부분 검색 가능)
+        
+        Returns:
+            검색된 도면 정보 리스트 (최신순)
+        """
+        try:
+            conn = get_db_connection()
+            if not conn:
+                logger.error("데이터베이스 연결 실패")
+                return []
+            
+            cursor = conn.cursor()
+            
+            # LIKE 검색 쿼리 (대소문자 구분 없이)
+            query = """
+            SELECT DISTINCT d_name,
+                   COUNT(*) as version_count,
+                   MAX(create_date) as latest_date,
+                   STRING_AGG(DISTINCT "user", ', ') as users
+            FROM domyun 
+            WHERE LOWER(d_name) LIKE LOWER(%s)
+            GROUP BY d_name
+            ORDER BY latest_date DESC
+            """
+            
+            search_pattern = f"%{search_term}%"
+            cursor.execute(query, (search_pattern,))
+            results = cursor.fetchall()
+            
+            cursor.close()
+            conn.close()
+            
+            # 결과를 딕셔너리 리스트로 변환
+            drawings = []
+            for d_name, version_count, latest_date, users in results:
+                drawings.append({
+                    'd_name': d_name,
+                    'version_count': version_count,
+                    'latest_date': latest_date,
+                    'users': users
+                })
+            
+            logger.info(f"도면 검색 '{search_term}': {len(drawings)}개 결과")
+            return drawings
+                
+        except Exception as e:
+            logger.error(f"도면 검색 실패: {e}")
+            return [] 
