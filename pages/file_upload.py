@@ -251,27 +251,7 @@ def show():
         if 'processed_files' not in st.session_state:
             st.session_state.processed_files = set()
         
-        # 파일 프레임들 표시
-        col1, col2 = st.columns(2)
-        
-        for i, uploaded_file in enumerate(uploaded_files):
-            with col1 if i % 2 == 0 else col2:
-                # 파일 프레임
-                st.markdown(f"""
-                <div class="file-frame">
-                    <h4>Frame {i + 17}</h4>
-                    <div style="display: flex; align-items: center; margin-bottom: 15px;">
-                        <div class="pdf-tag">PDF</div>
-                        <div style="flex: 1;">
-                            <div style="font-weight: 600; color: #2c3e50;">{uploaded_file.name}</div>
-                            <div style="font-size: 12px; color: #7f8c8d;">
-                                {uploaded_file.size // 1024} KB of {uploaded_file.size // 1024} KB • 
-                                <span class="status-completed">✓ Completed</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+
         
         # 파일 처리 로직 (백그라운드에서 실행)
         files_processed = False
@@ -414,14 +394,6 @@ def show():
                     # DataFrame으로 테이블 표시 (인덱스 완전 숨김)
                     df = pd.DataFrame(df_data)
                     st.dataframe(df, use_container_width=True, hide_index=True)
-                    
-                    # 분석 통계 표시
-                    st.markdown("---")
-                    col_ocr, col_det = st.columns(2)
-                    with col_ocr:
-                        st.metric("OCR Items", len(selected_analysis.get('ocr_items', [])))
-                    with col_det:
-                        st.metric("Detection Items", len(selected_analysis.get('detection_items', [])))
                 else:
                     st.info(f"📊 No equipment data found for {selected_file}")
             else:

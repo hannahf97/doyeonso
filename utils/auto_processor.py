@@ -299,8 +299,10 @@ def save_to_database(integrated_data: Dict, image_path: str, original_filename: 
         
         cursor = conn.cursor()
         
-        # 데이터베이스에 저장할 때는 확장자만 제거한 파일명 사용
+        # 데이터베이스에 저장할 때는 확장자와 뒤의 숫자들을 제거한 파일명 사용
         base_filename = os.path.splitext(original_filename)[0]
+        # 파일명 뒤의 _숫자, 숫자 패턴 제거 (예: stream_dose_ai_1 -> stream_dose_ai, 도면예시1 -> 도면예시)
+        base_filename = clean_filename(base_filename)
         
         # 기존 레코드 확인
         check_query = """
