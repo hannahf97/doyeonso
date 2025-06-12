@@ -1,390 +1,496 @@
+#!/usr/bin/env python3
+"""
+도면 파일 리스트 페이지
+데이터베이스에 저장된 도면 파일들을 미리보기와 상세 정보로 조회
+"""
+
 import streamlit as st
-import os
-from datetime import datetime
-import math
-from pathlib import Path
-import psycopg2
 import pandas as pd
-from config.database_config import get_db_connection
+import json
+from datetime import datetime
+from PIL import Image
 import base64
+import io
+import os
+from config.database_config import get_db_connection
+from config.user_config import USER_NAME
 
-def load_svg(svg_path):
-    """SVG 파일을 문자열로 로드"""
-    if os.path.exists(svg_path):
-        with open(svg_path, "r", encoding="utf-8") as f:
-            return f.read()
-    return ""
-
-def init_session_state():
-    """세션 상태 초기화"""
-    if "selected_file_id" not in st.session_state:
-        st.session_state.selected_file_id = None
-    if "current_page" not in st.session_state:
-        st.session_state.current_page = 1
-
-def create_pagination(total_pages, current_page):
-    """페이지네이션 UI 생성"""
-    cols = st.columns([1, 2, 1])
+def show():
+    """파일 리스트 페이지 메인 함수"""
     
-    with cols[1]:
-        pagination_cols = st.columns(min(5, total_pages + 2))
-        
-        # Previous 버튼
-        if pagination_cols[0].button("Previous", disabled=current_page == 1):
-            st.session_state.current_page = max(1, current_page - 1)
-            st.rerun()
+    # 헤더
+    st.title("📋 도면 파일 리스트")
+    st.markdown("데이터베이스에 저장된 도면 파일들을 확인하고 관리할 수 있습니다.")
+    
+    # 선택된 파일들을 저장할 세션 스테이트 초기화
+    if 'selected_files' not in st.session_state:
+        st.session_state.selected_files = []
+    
+    # 데이터베이스 연결 확인
+    conn = get_db_connection()
+    if not conn:
+        st.error("❌ 데이터베이스 연결에 실패했습니다.")
+        st.info("PostgreSQL 서버가 실행 중인지 확인해주세요.")
+        return
+    
+    try:
+        # 사이드바 - 필터 옵션
+        with st.sidebar:
+            st.header("🔍 필터 옵션")
             
-        # 페이지 번호 버튼
-        for i, col in enumerate(pagination_cols[1:-1], 1):
-            if i <= total_pages:
-                button_style = "primary" if i == current_page else "secondary"
-                if col.button(str(i), type=button_style):
-                    st.session_state.current_page = i
+            # 정렬 옵션
+            sort_options = {
+                "최신순": "create_date DESC",
+                "오래된 순": "create_date ASC", 
+                "이름순": "d_name ASC",
+                "ID순": "d_id ASC"
+            }
+            selected_sort = st.selectbox(
+                "정렬 방식",
+                list(sort_options.keys()),
+                key="sort_option"
+            )
+            
+            # 표시 개수
+            limit = st.slider(
+                "표시할 파일 수",
+                min_value=6,
+                max_value=50,
+                value=12,
+                step=6,
+                key="limit_slider"
+            )
+            
+            # 검색
+            search_term = st.text_input(
+                "파일명 검색",
+                placeholder="파일명을 입력하세요...",
+                key="search_input"
+            )
+            
+            # 새로고침 버튼
+            if st.button("🔄 새로고침", key="refresh_btn"):
+                st.rerun()
+            
+            # 선택된 파일 관리 (사이드바에는 목록만 표시)
+            st.markdown("---")
+            st.header("🎯 선택된 파일")
+            
+            if st.session_state.selected_files:
+                st.write(f"**선택된 파일: {len(st.session_state.selected_files)}개**")
+                
+                # 선택된 파일 목록 표시
+                for file_info in st.session_state.selected_files:
+                    st.write(f"• {file_info['name']}")
+                
+                # 선택 초기화 버튼만 사이드바에 유지
+                if st.button("🗑️ 선택 초기화", key="clear_selection", use_container_width=True):
+                    st.session_state.selected_files = []
                     st.rerun()
-                    
-        # Next 버튼
-        if pagination_cols[-1].button("Next", disabled=current_page == total_pages):
-            st.session_state.current_page = min(total_pages, current_page + 1)
+            else:
+                st.info("선택된 파일이 없습니다.")
+        
+        # 메인 컨텐츠 헤더 영역
+        header_col1, header_col2 = st.columns([3, 1])
+        
+        with header_col1:
+            st.subheader("📁 파일 목록")
+        
+        with header_col2:
+            # 선택된 파일이 있을 때만 챗봇 전송 버튼 표시
+            if st.session_state.selected_files and len(st.session_state.selected_files) > 0:
+                if st.button(
+                    f"💬 챗봇으로 전송 ({len(st.session_state.selected_files)}개)", 
+                    key="send_to_chatbot_main", 
+                    use_container_width=True,
+                    type="primary"
+                ):
+                    # 선택된 파일들을 챗봇으로 전송
+                    st.session_state['selected_files_for_chat'] = st.session_state.selected_files.copy()
+                    # 챗봇 페이지로 자동 이동
+                    st.session_state['page_view'] = 'chatbot'
+                    st.success(f"{len(st.session_state.selected_files)}개 파일이 챗봇으로 전송되었습니다!")
+                    st.rerun()
+            else:
+                # 선택된 파일이 없을 때는 플레이스홀더 표시
+                st.markdown(
+                    """
+                    <div style="
+                        height: 38px; 
+                        display: flex; 
+                        align-items: center; 
+                        justify-content: center; 
+                        color: #888; 
+                        font-size: 14px;
+                    ">
+                        파일을 선택해주세요
+                    </div>
+                    """, 
+                    unsafe_allow_html=True
+                )
+        
+        # 파일 데이터 조회
+        files_data = get_files_data(
+            conn, 
+            sort_by=sort_options[selected_sort],
+            limit=limit,
+            search_term=search_term
+        )
+        
+        if not files_data:
+            st.warning("📭 조건에 맞는 파일이 없습니다.")
+            st.info("다른 필터 조건을 시도해보세요.")
+            return
+        
+        # 전체 선택/해제 체크박스
+        col1, col2, col3, col4, col5 = st.columns([1, 1, 3, 2, 2])
+        with col1:
+            select_all = st.checkbox("전체 선택", key="select_all")
+        with col2:
+            st.write("**이미지**")
+        with col3:
+            st.write("**파일명**")
+        with col4:
+            st.write("**업로드 정보**")
+        with col5:
+            st.write("**데이터 통계**")
+
+        # 전체 선택 상태 처리 (즉시 반영)
+        if select_all and len(st.session_state.selected_files) != len(files_data):
+            # 전체 선택 - 전체 파일 데이터 전달
+            st.session_state.selected_files = files_data.copy()
             st.rerun()
-
-def show_file_card(col, file_data, index):
-    """파일 카드 UI 생성"""
-    with col:
-        # 선택 상태 확인
-        selected = st.session_state.selected_file_id == index
+        elif not select_all and len(st.session_state.selected_files) > 0:
+            # 전체 해제 (단, 사용자가 직접 체크를 해제한 경우만)
+            if st.session_state.get('manual_uncheck', False):
+                st.session_state.selected_files = []
+                st.session_state.manual_uncheck = False
+                st.rerun()
         
-        # 카드 스타일
-        card_style = f"""
-        <style>
-            .file-card-{index} {{
-                text-align: center;
-                padding: 15px;
-                margin-bottom: 0;
-                background-color: white;
-            }}
+        # 수동 체크 해제 감지
+        if not select_all and st.session_state.get('select_all_prev', False):
+            st.session_state.manual_uncheck = True
+        
+        st.session_state['select_all_prev'] = select_all
 
-            .file-content-{index} img {{
-                max-width: 100%;
-                height: auto;
-                margin-bottom: 10px;
-            }}
+        # 파일 목록 표시
+        for file_data in files_data:
+            display_file_row(file_data)
+        
+    except Exception as e:
+        st.error(f"❌ 오류가 발생했습니다: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
 
-            .file-info-{index} {{
-                margin-bottom: 10px;
-            }}
-
-            .select-button-{index} {{
-                width: 100%;
-            }}
-
-            /* 열 간격 제거 */
-            .row-widget.stHorizontal {{
-                gap: 0 !important;
-            }}
-            
-            /* Streamlit 기본 여백 제거 */
-            .row-widget.stHorizontal > div {{
-                margin: 0 !important;
-                padding: 0 !important;
-            }}
-            
-            .element-container, .stVerticalBlock {{
-                margin: 0 !important;
-                padding: 0 !important;
-            }}
-
-            /* 이미지 컨테이너 및 이미지 스타일 */
-            [data-testid="stImage"] {{
-                position: relative;
-                width: 100%;
-                padding-bottom: 66.67%; /* 3:2 비율 (높이가 너비의 2/3) */
-            }}
-
-            [data-testid="stImage"] > img {{
-                position: absolute;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                object-fit: cover;
-            }}
-
-            /* 기본 아이콘 컨테이너도 동일한 비율 적용 */
-            .default-icon-container {{
-                position: relative;
-                width: 100%;
-                padding-bottom: 66.67%;
-                background-color: #f0f2f6;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                border-radius: 4px;
-            }}
-
-            .default-icon {{
-                position: absolute;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-                font-size: 40px;
-                color: #666;
-            }}
-        </style>
+def get_files_data(conn, sort_by="create_date DESC", limit=12, search_term=""):
+    """파일 데이터 조회"""
+    try:
+        cursor = conn.cursor()
+        
+        # 기본 쿼리
+        query = """
+        SELECT 
+            d_id, 
+            d_name, 
+            "user", 
+            create_date, 
+            image_path, 
+            json_data
+        FROM domyun
         """
-        st.markdown(card_style, unsafe_allow_html=True)
         
-        # 카드 컨테이너 시작
-        # st.markdown(f'<div class="file-card-{index}">', unsafe_allow_html=True)
+        # WHERE 조건
+        conditions = []
+        params = []
         
+        if search_term:
+            conditions.append('d_name ILIKE %s')
+            params.append(f'%{search_term}%')
+        
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        
+        # ORDER BY와 LIMIT 추가
+        query += f" ORDER BY {sort_by} LIMIT %s"
+        params.append(limit)
+        
+        cursor.execute(query, params)
+        results = cursor.fetchall()
+        
+        files_data = []
+        for row in results:
+            d_id, d_name, user, create_date, image_path, json_data = row
+            
+            # 이미지 경로 확인 및 기본 이미지 설정
+            if not image_path or not os.path.exists(image_path):
+                image_path = "assets/img/default_bear.png"
+            
+            # 미리보기 정보 추출
+            ocr_count, detection_count, total_objects = extract_preview_info(json_data)
+            
+            files_data.append({
+                'id': d_id,
+                'name': d_name,
+                'user': user,
+                'create_date': create_date,
+                'image_path': image_path,
+                'ocr_count': ocr_count,
+                'detection_count': detection_count,
+                'total_objects': total_objects,
+                'json_data': json_data
+            })
+        
+        cursor.close()
+        return files_data
+        
+    except Exception as e:
+        st.error(f"데이터 조회 중 오류 발생: {str(e)}")
+        return []
+
+def extract_preview_info(json_data):
+    """JSON 데이터에서 미리보기 정보 추출"""
+    ocr_count = 0
+    detection_count = 0
+    total_objects = 0
+    
+    if json_data:
+        try:
+            # OCR 필드 개수 계산
+            if 'ocr_data' in json_data and json_data['ocr_data']:
+                ocr_data = json_data['ocr_data']
+                if 'images' in ocr_data:
+                    for image in ocr_data['images']:
+                        if 'fields' in image:
+                            ocr_count += len(image['fields'])
+            
+            # Detection 객체 개수 계산 (detection_data 또는 data에서)
+            if 'detection_data' in json_data and json_data['detection_data']:
+                detection_data = json_data['detection_data']
+                if 'detections' in detection_data:
+                    detection_count = len(detection_data['detections'])
+            elif 'data' in json_data and 'boxes' in json_data['data']:
+                detection_count = len(json_data['data']['boxes'])
+            
+            total_objects = ocr_count + detection_count
+            
+        except Exception as e:
+            # JSON 파싱 오류 시 기본값 유지
+            pass
+    
+    return ocr_count, detection_count, total_objects
+
+def display_file_row(file_data):
+    """개별 파일 행 표시"""
+    
+    # 개별 체크박스 상태 계산
+    is_checked = any(
+        selected['id'] == file_data['id'] for selected in st.session_state.selected_files
+    )
+    
+    # 개별 체크박스
+    col1, col2, col3, col4, col5 = st.columns([0.5, 1, 3, 2, 2])
+    
+    with col1:
+        checkbox_key = f"checkbox_{file_data['id']}"
+        checkbox_state = st.checkbox(
+            f"파일 {file_data['name']} 선택",
+            value=is_checked,
+            key=checkbox_key,
+            label_visibility="collapsed"
+        )
+        
+        # 체크박스 상태 변경 처리
+        if checkbox_state != is_checked:
+            if checkbox_state:
+                # 체크됨 - 전체 파일 데이터 추가
+                if not any(selected['id'] == file_data['id'] for selected in st.session_state.selected_files):
+                    st.session_state.selected_files.append(file_data.copy())
+            else:
+                # 체크 해제됨
+                st.session_state.selected_files = [
+                    selected for selected in st.session_state.selected_files 
+                    if selected['id'] != file_data['id']
+                ]
+            st.rerun()
+    
+    with col2:
         # 이미지 표시
         try:
-            st.image(file_data["image_path"], use_column_width=True)
-        except Exception:
-            try:
-                st.image("assets/img/default_bear.png", use_column_width=True)
-            except Exception:
-                # 기본 이미지도 로드 실패시 아이콘 표시
-                st.markdown("""
-                    <div class="default-icon-container">
-                        <span class="default-icon">📄</span>
-                    </div>
-                """, unsafe_allow_html=True)
-        
-        # 파일 정보 컨테이너
-        # st.markdown(f'<div class="file-info-{index}">', unsafe_allow_html=True)
-        st.markdown(f"**{file_data['d_name']}**")
-        st.markdown(f"<small>{file_data['create_date']}</small>", unsafe_allow_html=True)
-        # st.markdown('</div>', unsafe_allow_html=True)
-        
-        # 선택 버튼 컨테이너
-        # st.markdown(f'<div class="select-button-{index}">', unsafe_allow_html=True)
-        if st.button("선택", key=f"select_{index}"):
-            st.session_state.selected_file_id = index if not selected else None
+            if os.path.exists(file_data['image_path']):
+                with open(file_data['image_path'], "rb") as image_file:
+                    encoded_image = base64.b64encode(image_file.read()).decode()
+                    st.image(f"data:image/png;base64,{encoded_image}", width=100)
+            else:
+                st.write("🖼️ 이미지 없음")
+        except Exception as e:
+            st.write(f"❌ 이미지 로드 실패: {str(e)}")
+    
+    with col3:
+        # 파일 이름과 기본 정보
+        st.write(f"**{file_data['name']}**")
+        st.caption(f"ID: {file_data['id']}")
+    
+    with col4:
+        # 업로드 정보
+        st.write(f"**업로드자:** {file_data['user']}")
+        st.caption(f"**날짜:** {file_data['create_date']}")
+    
+    with col5:
+        # 데이터 정보
+        json_data = file_data.get('json_data', {})
+        if json_data:
+            # OCR 통계
+            ocr_count = 0
+            if 'ocr_data' in json_data:
+                for img in json_data['ocr_data'].get('images', []):
+                    ocr_count += len(img.get('fields', []))
+            
+            # Detection 통계
+            det_count = len(json_data.get('detection_data', {}).get('detections', []))
+            
+            st.write(f"**OCR:** {ocr_count}개")
+            st.write(f"**Detection:** {det_count}개")
+        else:
+            st.write("데이터 없음")
+    
+    # 액션 버튼들
+    btn_col1, btn_col2, btn_col3, btn_col4 = st.columns(4)
+    
+    with btn_col1:
+        if st.button("⚡ 빠른선택", key=f"quick_select_{file_data['id']}", use_container_width=True):
+            # 기존 선택 초기화 후 이 파일만 선택 (전체 데이터 포함)
+            st.session_state.selected_files = [file_data.copy()]
             st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # 카드 컨테이너 종료
-        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with btn_col2:
+        if st.button("💬 챗봇으로 분석", key=f"chat_{file_data['id']}", use_container_width=True):
+            # 이 파일만 선택하고 챗봇으로 이동 (전체 데이터 포함)
+            st.session_state['selected_files_for_chat'] = [file_data.copy()]
+            st.session_state['page_view'] = 'chatbot'
+            st.success(f"{file_data['name']} 파일이 챗봇으로 전송되었습니다!")
+            st.rerun()
+    
+    with btn_col3:
+        if st.button("📋 상세정보", key=f"detail_{file_data['id']}", use_container_width=True):
+            show_file_detail_modal(file_data)
+    
+    with btn_col4:
+        if st.button("🗑️ 삭제", key=f"delete_{file_data['id']}", use_container_width=True):
+            if st.button("삭제 확인", key=f"confirm_delete_{file_data['id']}"):
+                if delete_file(file_data['id']):
+                    st.success("파일이 삭제되었습니다.")
+                    st.rerun()
+                else:
+                    st.error("파일 삭제에 실패했습니다.")
+    
+    st.divider()
 
-def get_file_list():
-    """DB에서 파일 목록 조회 및 기본 데이터 추가"""
+@st.dialog("파일 상세 정보")
+def show_file_detail_modal(file_data):
+    """파일 상세 정보 모달"""
+    
+    st.markdown(f"### 📋 {file_data['name']}")
+    
+    # 기본 정보
+    st.markdown("#### 📄 기본 정보")
+    info_col1, info_col2 = st.columns(2)
+    
+    with info_col1:
+        st.write(f"**파일 ID:** {file_data['id']}")
+        st.write(f"**파일명:** {file_data['name']}")
+        st.write(f"**등록자:** {file_data['user']}")
+    
+    with info_col2:
+        st.write(f"**등록일:** {file_data['create_date']}")
+        st.write(f"**OCR 필드:** {file_data['ocr_count']}개")
+        st.write(f"**Detection 객체:** {file_data['detection_count']}개")
+    
+    # 이미지 미리보기
+    st.markdown("#### 🖼️ 이미지 미리보기")
+    try:
+        if os.path.exists(file_data['image_path']):
+            st.image(file_data['image_path'], use_container_width=True)
+        else:
+            st.image("assets/img/default_bear.png", use_container_width=True)
+    except Exception:
+        st.error("이미지를 로드할 수 없습니다.")
+    
+    # JSON 데이터 상세 보기
+    if file_data.get('json_data'):
+        st.markdown("#### 📊 데이터 분석")
+        
+        tab1, tab2 = st.tabs(["OCR 데이터", "Detection 데이터"])
+        
+        with tab1:
+            if 'ocr_data' in file_data['json_data']:
+                display_ocr_data(file_data['json_data']['ocr_data'])
+            else:
+                st.info("OCR 데이터가 없습니다.")
+        
+        with tab2:
+            json_data = file_data['json_data']
+            if 'detection_data' in json_data:
+                display_detection_data(json_data['detection_data'])
+            elif 'data' in json_data and 'boxes' in json_data['data']:
+                display_detection_data({'detections': json_data['data']['boxes']})
+            else:
+                st.info("Detection 데이터가 없습니다.")
+
+def display_ocr_data(ocr_data):
+    """OCR 데이터 표시"""
+    if 'images' in ocr_data:
+        for i, image in enumerate(ocr_data['images']):
+            if 'fields' in image:
+                st.write(f"**이미지 {i+1} - OCR 결과 ({len(image['fields'])}개 필드)**")
+                
+                for j, field in enumerate(image['fields']):
+                    if 'inferText' in field:
+                        confidence = field.get('inferConfidence', 0)
+                        st.write(f"• {field['inferText']} (신뢰도: {confidence:.3f})")
+
+def display_detection_data(detection_data):
+    """Detection 데이터 표시"""
+    if 'detections' in detection_data:
+        detections = detection_data['detections']
+        st.write(f"**Detection 결과 ({len(detections)}개 객체)**")
+        
+        for i, detection in enumerate(detections):
+            label = detection.get('label', detection.get('id', f'객체 {i+1}'))
+            confidence = detection.get('confidence', 0)
+            
+            # 위치 정보
+            if 'boundingBox' in detection:
+                bbox = detection['boundingBox']
+                pos_info = f"위치: ({bbox.get('x', 0):.1f}, {bbox.get('y', 0):.1f})"
+            elif all(k in detection for k in ['x', 'y']):
+                pos_info = f"위치: ({detection['x']}, {detection['y']})"
+            else:
+                pos_info = "위치 정보 없음"
+            
+            if confidence > 0:
+                st.write(f"• {label} (신뢰도: {confidence:.3f}, {pos_info})")
+            else:
+                st.write(f"• {label} ({pos_info})")
+
+def delete_file(file_id):
+    """파일 삭제"""
     try:
         conn = get_db_connection()
         if not conn:
-            st.error("데이터베이스 연결 실패")
-            return []
-            
-        query = "SELECT image_path, d_name, create_date FROM domyun ORDER BY create_date DESC"
-        df = pd.read_sql_query(query, conn)
-        file_list = df.to_dict('records')
+            return False
         
-        # DB 데이터가 부족한 경우 기본 데이터로 채우기
-        while len(file_list) < 7:  # 최소 7개의 항목 유지
-            idx = len(file_list) + 1
-            file_list.append({
-                "image_path": "assets/img/default_bear.png",
-                "d_name": f"파일 {idx}",
-                "create_date": datetime.now().strftime("%Y-%m-%d")
-            })
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM domyun WHERE d_id = %s", (file_id,))
+        conn.commit()
         
-        return file_list
+        cursor.close()
+        conn.close()
+        return True
+        
     except Exception as e:
-        st.error(f"DB 조회 중 오류 발생: {str(e)}")
-        # 오류 발생 시 기본 데이터만 반환
-        return [
-            {
-                "image_path": "assets/img/default_bear.png",
-                "d_name": f"파일 {i}",
-                "create_date": datetime.now().strftime("%Y-%m-%d")
-            }
-            for i in range(1, 8)  # 7개의 기본 데이터
-        ]
-    finally:
-        if 'conn' in locals():
-            conn.close()
-
-def get_base64_encoded_svg(svg_path):
-    """SVG 파일을 base64로 인코딩"""
-    try:
-        with open(svg_path, "rb") as f:
-            contents = f.read()
-        return base64.b64encode(contents).decode("utf-8")
-    except FileNotFoundError:
-        print(f"SVG 파일을 찾을 수 없습니다: {svg_path}")
-        return None
-
-def show():
-    """파일 목록 페이지"""
-    init_session_state()
-    
-    # 스타일 설정
-    st.markdown("""
-        <style>
-            .block-container {
-                padding-top: 0 !important;
-                padding-bottom: 0;
-            }
-            .stButton button {
-                width: 100%;
-            }
-            footer {
-                display: none;
-            }
-            .element-container {
-                margin-top: 0 !important;
-            }
-            .stMarkdown {
-                margin-top: 0 !important;
-            }
-        </style>
-    """, unsafe_allow_html=True)
-    
-    # 전체 화면 스타일 적용
-    st.markdown("""
-        <style>
-            /* 메인 컨테이너 스타일 */
-            .main .block-container {
-                padding: 1rem 2rem;
-                max-width: 100%;
-                width: calc(100% - 260px);
-                min-height: 100vh;
-            }
-            
-            /* Streamlit 기본 패딩 제거 */
-            .stApp {
-                margin: 0;
-                padding: 0;
-            }
-            
-            /* columns 간격 조정 */
-            [data-testid="column"] {
-                padding: 0 !important;
-                margin: 0 !important;
-            }
-
-            [data-testid="stHorizontalBlock"] {
-                gap: 0.5rem !important;
-            }
-            
-            /* 타이틀 이미지 스타일 */
-            .title-image {
-                width: 266px;  
-                height: auto;
-                margin: 0;
-                display: block;
-                margin-bottom: 0; 
-            }
-            
-            /* 전체 컨텐츠 컨테이너 */
-            .content-container {
-                max-width: 1200px;
-                margin: 0 auto;
-                padding: 0 2rem 0.5rem 2rem; 
-            }
-            
-            /* 카드 그리드 컨테이너 */
-            .grid-container {
-                display: flex;
-                flex-wrap: wrap;
-                justify-content: center;
-                gap: 0.33rem;
-                padding: 0;
-                margin: 0;
-            }
-            
-            /* 카드 스타일 */
-            .file-card {
-                width: calc(33.33% - 1rem);
-                min-width: 250px;
-                margin-bottom: 1rem;
-                text-align: center;
-            }
-            
-            /* 이미지 크기 조정 */
-            .stImage img {
-                max-height: 150px;
-                object-fit: contain;
-                margin: 0 auto;
-            }
-            
-            /* 페이지네이션 스타일 */
-            [data-testid="stHorizontalBlock"] {
-                justify-content: center;
-                gap: 0.5rem;
-            }
-            
-            /* 버튼 스타일 */
-            .stButton button {
-                min-width: 40px;
-                height: 35px;
-                padding: 0 10px;
-            }
-
-            /* Streamlit 푸터 숨기기 */
-            footer {
-                display: none !important;
-            }
-
-            /* 푸터 영역 제거 */
-            .stApp > footer {
-                display: none !important;
-            }
-
-            /* 기타 Streamlit 워터마크 숨기기 */
-            #MainMenu {
-                display: none !important;
-            }
-
-            [data-testid="stToolbar"] {
-                display: none !important;
-            }
-        </style>
-    """, unsafe_allow_html=True)
-    
-    # 전체 컨텐츠 컨테이너 시작
-    st.markdown('<div class="content-container">', unsafe_allow_html=True)
-    
-    # 타이틀 SVG 로드 및 표시
-    title_svg = get_base64_encoded_svg("assets/img/filelisttitle.svg")
-    if title_svg:
-        st.markdown(f"""
-            <img src="data:image/svg+xml;base64,{title_svg}" class="title-image" alt="File List Title">
-        """, unsafe_allow_html=True)
-
-
-    # 카드 그리드 컨테이너 시작
-    st.markdown('<div class="grid-container">', unsafe_allow_html=True)
-    
-    # 파일 목록 가져오기
-    files = get_file_list()
-    
-    # 페이지네이션 계산
-    items_per_page = 6
-    total_items = len(files)
-    total_pages = math.ceil(total_items / items_per_page)
-    current_page = st.session_state.current_page
-    start_idx = (current_page - 1) * items_per_page
-    end_idx = start_idx + items_per_page
-    
-    # 현재 페이지의 아이템들 표시
-    current_items = files[start_idx:end_idx]
-    
-    # 3열 그리드 생성
-    for i in range(0, len(current_items), 3):
-        cols = st.columns(3)
-        for j, col in enumerate(cols):
-            if i + j < len(current_items):
-                show_file_card(col, current_items[i + j], start_idx + i + j)
-    
-    # 카드 그리드 컨테이너 종료
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # 페이지네이션 UI
-    st.markdown("<br>", unsafe_allow_html=True)
-    create_pagination(total_pages, current_page)
-    
-    # 전체 컨텐츠 컨테이너 종료
-    st.markdown('</div>', unsafe_allow_html=True)
+        st.error(f"파일 삭제 중 오류 발생: {str(e)}")
+        return False
 
 if __name__ == "__main__":
     show() 

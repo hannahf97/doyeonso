@@ -11,9 +11,9 @@ class DatabaseService:
     def __init__(self):
         self.db_config = {
             'host': os.getenv('DB_HOST', 'localhost'),
-            'database': os.getenv('DB_NAME', 'doyeonso'), 
-            'user': os.getenv('DB_USER', 'postgres'),
-            'password': os.getenv('DB_PASSWORD', 'password'),
+            'database': os.getenv('DB_NAME', 'postgres'), 
+            'user': os.getenv('DB_USER', 'kjh'),
+            'password': os.getenv('DB_PASSWORD', ''),
             'port': os.getenv('DB_PORT', '5432')
         }
 

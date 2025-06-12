@@ -1,9 +1,11 @@
 import streamlit as st
 import os
+import json
 from models.chatbotModel import PIDExpertChatbot
 from loguru import logger
 import time
 from datetime import datetime
+from config.database_config import get_db_connection
 
 def show():
     """P&ID 전문가 챗봇 페이지"""
@@ -16,10 +18,81 @@ def show():
         with st.spinner("🤖 P&ID 전문가 챗봇을 초기화하는 중..."):
             st.session_state.chatbot = PIDExpertChatbot()
     
-    # 선택된 도면 정보 표시 (file list에서 선택된 것)
+    # 파일 리스트에서 선택된 파일들 확인 및 표시
+    if 'selected_files_for_chat' in st.session_state and st.session_state.selected_files_for_chat:
+        st.markdown("## 📋 선택된 파일들")
+        
+        selected_files = st.session_state.selected_files_for_chat
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.success(f"✅ **{len(selected_files)}개 파일이 선택되었습니다**")
+            
+            # 파일 정보를 데이터베이스에서 가져와서 표시
+            conn = get_db_connection()
+            if conn:
+                try:
+                    for i, file_info in enumerate(selected_files):
+                        with st.expander(f"📄 {file_info['name']}", expanded=False):
+                            # 데이터베이스에서 상세 정보 조회
+                            file_details = get_file_details(conn, file_info['id'])
+                            if file_details:
+                                col_a, col_b = st.columns(2)
+                                with col_a:
+                                    st.write(f"**ID:** {file_details['id']}")
+                                    st.write(f"**사용자:** {file_details['user']}")
+                                    st.write(f"**등록일:** {file_details['create_date']}")
+                                
+                                with col_b:
+                                    # JSON 데이터에서 OCR/Detection 정보 추출
+                                    if file_details['json_data']:
+                                        try:
+                                            data = file_details['json_data'] if isinstance(file_details['json_data'], dict) else json.loads(file_details['json_data'])
+                                            ocr_count = count_ocr_fields(data)
+                                            detection_count = count_detection_objects(data)
+                                            
+                                            st.write(f"**OCR 필드:** {ocr_count}개")
+                                            st.write(f"**Detection 객체:** {detection_count}개")
+                                        except:
+                                            st.write("**OCR 필드:** 0개")
+                                            st.write("**Detection 객체:** 0개")
+                                
+                                # OCR 텍스트 미리보기
+                                if file_details['json_data']:
+                                    ocr_text = extract_ocr_text_preview(file_details['json_data'])
+                                    if ocr_text:
+                                        st.markdown("**📄 OCR 텍스트 미리보기:**")
+                                        st.text_area("OCR 텍스트 미리보기", value=ocr_text[:200] + "..." if len(ocr_text) > 200 else ocr_text, height=80, disabled=True, key=f"ocr_preview_{i}", label_visibility="collapsed")
+                finally:
+                    conn.close()
+        
+        with col2:
+            if st.button("🗑️ 파일 선택 초기화", use_container_width=True):
+                st.session_state.selected_files_for_chat = []
+                st.rerun()
+        
+        st.markdown("---")
+        
+        # 선택된 파일들에 대한 빠른 분석 버튼
+        st.markdown("### 🚀 빠른 분석")
+        col_a, col_b, col_c = st.columns(3)
+        
+        with col_a:
+            if st.button("📋 전체 파일 요약", use_container_width=True):
+                _add_test_question(f"선택된 {len(selected_files)}개 파일({', '.join([f['name'] for f in selected_files])})에 대한 종합적인 요약을 제공해주세요.")
+        
+        with col_b:
+            if st.button("🔍 상세 분석", use_container_width=True):
+                _add_test_question(f"선택된 파일들({', '.join([f['name'] for f in selected_files])})의 상세 분석을 해주세요. 주요 계측기기, 제어 시스템, 안전장치를 중심으로 설명해주세요.")
+        
+        with col_c:
+            if st.button("⚡ OCR 텍스트 분석", use_container_width=True):
+                _add_test_question(f"선택된 파일들의 OCR 텍스트를 분석하여 주요 설비명, 계측기 태그, 제어 포인트를 추출해주세요.")
+    
+    # 기존 단일 도면 선택 기능 (호환성 유지)
     selected_drawing = st.session_state.get('selected_drawing_name', None)
     
-    if selected_drawing:
+    if selected_drawing and not st.session_state.get('selected_files_for_chat'):
         st.success(f"✅ 선택된 도면: **{selected_drawing}**")
         st.info("💡 이 도면에 대해 질문하시면 데이터베이스의 정보를 활용하여 답변해드립니다.")
         
@@ -72,7 +145,8 @@ def show():
                     response_data = st.session_state.chatbot.generate_response(
                         analysis_prompt,
                         use_web_search=False,
-                        selected_drawing=selected_drawing
+                        selected_drawing=selected_drawing,
+                        selected_files=st.session_state.get('selected_files_for_chat')
                     )
                 
                 # 어시스턴트 메시지 저장
@@ -90,9 +164,17 @@ def show():
                 
                 st.success("✅ 상세 분석 완료!")
                 st.rerun()
-    else:
-        st.info("💡 도면을 선택하려면 📋 FILE LIST 페이지로 이동하세요.")
     
+    # 파일이 선택되지 않은 경우
+    if not selected_drawing and not st.session_state.get('selected_files_for_chat'):
+        st.info("💡 도면을 선택하려면 📋 FILE LIST 페이지로 이동하세요.")
+        
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            if st.button("📋 파일 리스트로 이동", use_container_width=True, type="primary"):
+                st.session_state['page_view'] = 'filelist'
+                st.rerun()
+
     # 테스트용 질문 버튼들
     st.markdown("## 🧪 테스트 질문")
     st.markdown("아래 버튼을 클릭하여 다양한 질문을 테스트해보세요:")
@@ -132,6 +214,9 @@ def show():
         
         if st.button("도면 시각화", key="test_visualization", use_container_width=True):
             _add_test_question("stream_does_ai_1 도면을 시각화해서 분석해줘")
+        
+        if st.button("변경사항 비교", key="test_change_comparison", use_container_width=True):
+            _add_test_question("stream_dose_ai_1과 stream_dose_ai_3의 변경사항을 비교 분석해주세요.")
         
         if st.button("종합 분석", key="test_comprehensive", use_container_width=True):
             _add_test_question("stream_does_ai_1 도면을 종합적으로 분석해줘")
@@ -258,7 +343,8 @@ def show():
                 response_data = st.session_state.chatbot.generate_response(
                     prompt, 
                     use_web_search=use_web_search,
-                    selected_drawing=st.session_state.get('selected_drawing_name')
+                    selected_drawing=st.session_state.get('selected_drawing_name'),
+                    selected_files=st.session_state.get('selected_files_for_chat')
                 )
             
             # 응답 표시
@@ -380,7 +466,8 @@ def show():
     st.caption("⚠️ 이 챗봇은 보조 도구이며, 중요한 안전 결정은 반드시 전문가와 상의하시기 바랍니다.")
 
 def _add_test_question(question_text):
-    """테스트 질문을 대화에 추가하는 헬퍼 함수"""
+    """테스트 질문을 대화에 추가하고 자동 응답 생성"""
+    
     if 'messages' not in st.session_state:
         st.session_state.messages = []
     
@@ -391,8 +478,114 @@ def _add_test_question(question_text):
         "timestamp": datetime.now()
     })
     
-    # 페이지 새로고침으로 질문이 추가된 것을 표시
+    # 자동 응답 생성
+    with st.spinner("🤔 분석 중..."):
+        response_data = st.session_state.chatbot.generate_response(
+            question_text,
+            use_web_search=False,
+            selected_drawing=st.session_state.get('selected_drawing_name'),
+            selected_files=st.session_state.get('selected_files_for_chat')
+        )
+    
+    # 어시스턴트 메시지 저장
+    assistant_message = {
+        "role": "assistant",
+        "content": response_data['response'],
+        "timestamp": datetime.now(),
+        "sources": response_data.get('sources', []),
+        "debug_info": {
+            "query_type": response_data.get('query_type'),
+            "context_quality": response_data.get('context_quality'),
+            "web_search_used": response_data.get('web_search_used', False),
+            "selected_files_count": response_data.get('selected_files_count', 0),
+            "files_processed": response_data.get('selected_files_count', 0)  # 이미지 처리 대신 파일 처리 수로 변경
+        }
+    }
+    
+    # 시각화 결과가 있으면 추가
+    if response_data.get('visualization'):
+        assistant_message["visualization"] = response_data['visualization']
+    
+    st.session_state.messages.append(assistant_message)
+    
+    # 페이지 새로고침
     st.rerun()
+
+def get_file_details(conn, file_id):
+    """데이터베이스에서 파일 상세 정보 조회"""
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT d_id, d_name, "user", create_date, image_path, json_data
+            FROM domyun WHERE d_id = %s
+        """, (file_id,))
+        row = cursor.fetchone()
+        
+        if row:
+            return {
+                'id': row[0],
+                'name': row[1],
+                'user': row[2],
+                'create_date': row[3],
+                'image_path': row[4],
+                'json_data': row[5]
+            }
+        return None
+    except Exception:
+        return None
+
+def count_ocr_fields(json_data):
+    """JSON 데이터에서 OCR 필드 개수 계산"""
+    print('json_data', json_data)
+    try:
+        if 'ocr' in json_data and json_data['ocr']:
+            print('ocr')
+            ocr_data = json_data['ocr']
+            if isinstance(ocr_data, dict) and 'images' in ocr_data:
+                total_fields = 0
+                for img in ocr_data['images']:
+                    if 'fields' in img:
+                        total_fields += len(img['fields'])
+                return total_fields
+        return 0
+    except:
+        return 0
+
+def count_detection_objects(json_data):
+    print('json_data', json_data)
+    """JSON 데이터에서 Detection 객체 개수 계산"""
+    try:
+        if 'detecting' in json_data and json_data['detecting']:
+            print('detecting')
+            detection_data = json_data['detecting']
+            if isinstance(detection_data, dict) and 'data' in detection_data:
+                return len(detection_data['data'])
+        return 0
+    except:
+        return 0
+
+def extract_ocr_text_preview(json_data):
+    """JSON 데이터에서 OCR 텍스트 미리보기 추출"""
+    try:
+        if not json_data:
+            return ""
+        
+        data = json_data if isinstance(json_data, dict) else json.loads(json_data)
+        
+        if 'ocr' in data and data['ocr']:
+            ocr_data = data['ocr']
+            if isinstance(ocr_data, dict) and 'images' in ocr_data:
+                texts = []
+                for img in ocr_data['images']:
+                    if 'fields' in img:
+                        for field in img['fields']:
+                            if 'inferText' in field and field['inferText']:
+                                texts.append(field['inferText'])
+                
+                return " | ".join(texts)
+        return ""
+    except:
+        return ""
 
 def _display_sources(sources, debug_info):
     """소스 정보 표시 함수 - 모든 소스 타입 지원"""
@@ -532,29 +725,11 @@ def _display_debug_info(debug_info):
     
     # 쿼리 타입별 색상 및 아이콘
     if query_type == "comprehensive_analysis":
-        type_display = "🔬 종합분석"
+        type_display = "🔬 분석"
         color = "purple"
     elif query_type == "drawing_visualization":
         type_display = "🎨 도면시각화"
         color = "teal"
-    elif query_type == "drawing_search":
-        type_display = "🔍 도면검색"
-        color = "blue"
-    elif query_type == "change_analysis":
-        type_display = "🔄 변경분석"
-        color = "orange"
-    elif query_type == "internal_data":
-        type_display = "🔒 내부데이터"
-        color = "blue"
-    elif query_type == "safety_analysis":
-        type_display = "🛡️ 안전분석"
-        color = "red"
-    elif query_type == "instrument_explanation":
-        type_display = "⚙️ 계측설명"
-        color = "green"
-    else:
-        type_display = "💬 일반"
-        color = "gray"
     
     # 메트릭 표시
     col1, col2, col3, col4 = st.columns(4)
@@ -580,6 +755,52 @@ def _display_debug_info(debug_info):
             high_count = debug_info.get('high_quality_sources', 0)
             low_count = debug_info.get('low_quality_sources', 0)
             st.metric("📈 소스 품질", f"고품질: {high_count}, 참고: {low_count}")
+    
+    # 선택된 파일 정보 표시
+    selected_files_count = debug_info.get('selected_files_count', 0)
+    if selected_files_count > 0:
+        st.markdown("---")
+        st.markdown("### 📁 선택된 파일 데이터")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("📄 선택된 파일", f"{selected_files_count}개")
+        
+        with col2:
+            ocr_data_included = debug_info.get('ocr_data_included', False)
+            st.metric("📝 OCR 데이터", "✅ 포함됨" if ocr_data_included else "❌ 없음")
+        
+        with col3:
+            detection_data_included = debug_info.get('detection_data_included', False)
+            st.metric("🎯 Detection 데이터", "✅ 포함됨" if detection_data_included else "❌ 없음")
+        
+        with col4:
+            total_context_length = debug_info.get('total_context_length', 0)
+            st.metric("📊 총 컨텍스트", f"{total_context_length}자")
+        
+        # 파일별 상세 정보 표시
+        if debug_info.get('file_details'):
+            with st.expander("🔍 파일별 상세 정보", expanded=False):
+                for i, file_detail in enumerate(debug_info['file_details'], 1):
+                    st.markdown(f"**파일 {i}: {file_detail.get('name', 'Unknown')}**")
+                    st.write(f"- OCR 텍스트: {file_detail.get('ocr_count', 0)}개")
+                    st.write(f"- Detection 객체: {file_detail.get('detection_count', 0)}개")
+                    st.write(f"- JSON 데이터 크기: {file_detail.get('json_size', 0)}자")
+                    
+                    # OCR 텍스트 미리보기
+                    if file_detail.get('ocr_preview'):
+                        st.text_area(f"OCR 텍스트 미리보기 (파일 {i})", 
+                                   value=file_detail['ocr_preview'][:200] + "..." if len(file_detail['ocr_preview']) > 200 else file_detail['ocr_preview'], 
+                                   height=80, disabled=True, key=f"debug_ocr_{i}", label_visibility="collapsed")
+                    
+                    # Detection 객체 미리보기
+                    if file_detail.get('detection_preview'):
+                        st.text_area(f"Detection 객체 미리보기 (파일 {i})", 
+                                   value=file_detail['detection_preview'][:200] + "..." if len(file_detail['detection_preview']) > 200 else file_detail['detection_preview'], 
+                                   height=80, disabled=True, key=f"debug_detection_{i}", label_visibility="collapsed")
+                    
+                    if i < len(debug_info['file_details']):
+                        st.divider()
     
     # 종합 분석 전용 정보 표시
     if query_type == "comprehensive_analysis":
@@ -613,6 +834,10 @@ def _display_debug_info(debug_info):
         elif query_type == "comprehensive_analysis":
             extra_info += " | 🔬 통합: RAG+JSON+시각화"
         
+        # 선택된 파일이 있는 경우 파일 정보 추가
+        if selected_files_count > 0:
+            extra_info += f" | 📁 파일: {selected_files_count}개"
+        
         st.caption(extra_info)
 
 def _display_visualization(visualization_data):
@@ -621,52 +846,105 @@ def _display_visualization(visualization_data):
         st.error("시각화 데이터가 없습니다.")
         return
     
-    # 기본 정보 표시
-    st.markdown("### 📊 시각화 정보")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("📄 도면명", visualization_data.get('drawing_name', 'N/A'))
-    with col2:
-        st.metric("🔢 OCR 텍스트", f"{visualization_data.get('ocr_count', 0)}개")
-    with col3:
-        st.metric("🎯 Detection", f"{visualization_data.get('detection_count', 0)}개")
-    with col4:
-        original_size = visualization_data.get('original_size', (0, 0))
-        st.metric("📐 이미지 크기", f"{original_size[0]}×{original_size[1]}")
-    
-    # 이미지 표시
-    if 'image_base64' in visualization_data:
-        st.markdown("### 🖼️ 분석된 도면")
+    # 변경 비교 시각화인지 확인
+    if 'as_is_image' in visualization_data and 'to_be_image' in visualization_data:
+        # 변경 비교 시각화 처리
+        st.markdown("### 🔄 변경 비교 시각화")
         
-        # Base64 이미지 표시
-        import base64
-        image_html = f'<img src="data:image/png;base64,{visualization_data["image_base64"]}" style="max-width: 100%; height: auto;" />'
-        st.markdown(image_html, unsafe_allow_html=True)
+        # 통계 정보 표시
+        stats = visualization_data.get('statistics', {})
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("📋 AS-IS 객체", f"{stats.get('total_as_is', 0)}개")
+        with col2:
+            st.metric("📋 TO-BE 객체", f"{stats.get('total_to_be', 0)}개")
+        with col3:
+            st.metric("🔴 제거된 객체", f"{stats.get('removed_count', 0)}개")
+        with col4:
+            st.metric("🟢 추가된 객체", f"{stats.get('added_count', 0)}개")
+        
+        # AS-IS와 TO-BE 이미지를 나란히 표시
+        st.markdown("### 🖼️ 비교 이미지")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            as_is_data = visualization_data.get('as_is_image', {})
+            if as_is_data and 'image_base64' in as_is_data:
+                st.markdown(f"#### {as_is_data.get('title', 'AS-IS')}")
+                image_html = f'<img src="data:image/png;base64,{as_is_data["image_base64"]}" style="max-width: 100%; height: auto;" />'
+                st.markdown(image_html, unsafe_allow_html=True)
+                st.caption(f"강조된 객체: {as_is_data.get('highlight_count', 0)}개 / 전체: {as_is_data.get('total_objects', 0)}개")
+        
+        with col2:
+            to_be_data = visualization_data.get('to_be_image', {})
+            if to_be_data and 'image_base64' in to_be_data:
+                st.markdown(f"#### {to_be_data.get('title', 'TO-BE')}")
+                image_html = f'<img src="data:image/png;base64,{to_be_data["image_base64"]}" style="max-width: 100%; height: auto;" />'
+                st.markdown(image_html, unsafe_allow_html=True)
+                st.caption(f"강조된 객체: {to_be_data.get('highlight_count', 0)}개 / 전체: {to_be_data.get('total_objects', 0)}개")
         
         # 범례 표시
-        st.markdown("### 📌 범례")
+        st.markdown("### 📌 변경 비교 범례")
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("🔵 **파란색 박스**: OCR 텍스트 영역")
+            st.markdown("🔴 **빨간색 박스**: 변경된 객체 (제거/추가)")
         with col2:
-            st.markdown("🔴 **빨간색 박스**: AI 감지 객체")
+            st.markdown("⚪ **회색 박스**: 변경되지 않은 객체")
         
-        # 상세 정보 - expander 대신 일반 컨테이너 사용
-        st.markdown("### 📋 상세 분석 정보")
+        # 상세 변경 내역 표시
+        if visualization_data.get('analysis_summary'):
+            st.markdown("### 📋 상세 변경 내역")
+            st.text_area("상세 변경 내역", value=visualization_data['analysis_summary'], height=300, disabled=True, label_visibility="collapsed")
         
-        resized_size = visualization_data.get('resized_size', (0, 0))
-        st.write(f"**원본 크기:** {original_size[0]} × {original_size[1]}")
-        st.write(f"**분석 크기:** {resized_size[0]} × {resized_size[1]}")
-        st.write(f"**분석 요약:** {visualization_data.get('analysis_summary', 'N/A')}")
-        
-        # 도면 데이터 정보
-        drawing_data = visualization_data.get('drawing_data', {})
-        if drawing_data:
-            st.write(f"**등록일:** {drawing_data.get('create_date', 'N/A')}")
-            st.write(f"**등록자:** {drawing_data.get('user', 'N/A')}")
     else:
-        st.error("시각화된 이미지가 없습니다.")
+        # 기존 단일 도면 시각화 처리
+        st.markdown("### 📊 시각화 정보")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("📄 도면명", visualization_data.get('drawing_name', 'N/A'))
+        with col2:
+            st.metric("🔢 OCR 텍스트", f"{visualization_data.get('ocr_count', 0)}개")
+        with col3:
+            st.metric("🎯 Detection", f"{visualization_data.get('detection_count', 0)}개")
+        with col4:
+            original_size = visualization_data.get('original_size', (0, 0))
+            st.metric("📐 이미지 크기", f"{original_size[0]}×{original_size[1]}")
+        
+        # 이미지 표시
+        if 'image_base64' in visualization_data:
+            st.markdown("### 🖼️ 분석된 도면")
+            
+            # Base64 이미지 표시
+            import base64
+            image_html = f'<img src="data:image/png;base64,{visualization_data["image_base64"]}" style="max-width: 100%; height: auto;" />'
+            st.markdown(image_html, unsafe_allow_html=True)
+            
+            # 범례 표시
+            st.markdown("### 📌 범례")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("🔵 **파란색 박스**: OCR 텍스트 영역")
+            with col2:
+                st.markdown("🔴 **빨간색 박스**: AI 감지 객체")
+            
+            # 상세 정보 - expander 대신 일반 컨테이너 사용
+            st.markdown("### 📋 상세 분석 정보")
+            
+            resized_size = visualization_data.get('resized_size', (0, 0))
+            st.write(f"**원본 크기:** {original_size[0]} × {original_size[1]}")
+            st.write(f"**분석 크기:** {resized_size[0]} × {resized_size[1]}")
+            st.write(f"**분석 요약:** {visualization_data.get('analysis_summary', 'N/A')}")
+            
+            # 도면 데이터 정보
+            drawing_data = visualization_data.get('drawing_data', {})
+            if drawing_data:
+                st.write(f"**등록일:** {drawing_data.get('create_date', 'N/A')}")
+                st.write(f"**등록자:** {drawing_data.get('user', 'N/A')}")
+        else:
+            st.error("시각화된 이미지가 없습니다.")
 
 if __name__ == "__main__":
     show() 

@@ -204,33 +204,13 @@ class PIDExpertChatbot:
         return system_prompt
 
     def _detect_query_type(self, query: str) -> str:
-        """쿼리 유형 감지 - 도면 검색 기능 추가"""
+        """쿼리 유형 감지 - 변경 분석만 지원"""
         
-        # 도면 시각화 관련 키워드 확인
-        visualization_keywords = [
-            '분석해줘', '시각화', '그려줘', '보여줘', '표시해줘', 
-            'ocr', 'detection', '바운딩', '박스', '네모'
-        ]
-        
-        # 도면 검색 관련 키워드 확인
-        drawing_search_keywords = [
-            '도면', '파일', '그림', 'pdf', 'stream', 'does', 'ai',
-            '찾아', '검색', '보여', '알려', '어디', '있나', '무엇'
-        ]
-        
-        # 내부/기밀 데이터 관련 키워드 (웹 검색 금지)
-        internal_keywords = [
-            '공정', '시스템', '요약', '분석', '도면', '설계', '운전', '제어',
-            '프로세스', '설비',
-            '절차', '매뉴얼', '사양', '규격'
-        ]
-        
-        # 변경/비교 관련 키워드 (더 정확한 감지)
+        # 변경/비교 관련 키워드 확인
         change_keywords = [
-            '변경', '차이', '비교', '수정', '개선', '업데이트', '바뀐', '달라진',
-            '이전', '기존', '원래', '새로운', '변화', '다른점', '차이점',
-            '개정', '수정사항', '변경사항', '업그레이드', '교체', '교환',
-            '전후', '변동', '조정', '개량', '개선사항'
+            '변경', '비교', '차이', 'compare', 'difference', 'change',
+            'as-is', 'to-be', 'asis', 'tobe', '이전', '이후', '전후',
+            '수정', '개선', '업데이트', '바뀐', '달라진'
         ]
         
         # 비교 표현 패턴
@@ -249,29 +229,8 @@ class PIDExpertChatbot:
         
         query_lower = query.lower()
         
-        # 도면 시각화 키워드 우선 확인 (도면명과 함께 사용된 경우)
-        has_drawing_ref = any(keyword in query for keyword in drawing_search_keywords)
-        has_viz_request = any(keyword in query for keyword in visualization_keywords)
-        
-        if has_drawing_ref and has_viz_request:
-            # 도면 이름 후보가 있는지 확인
-            drawing_candidates = self.extract_drawing_names_from_query(query)
-            if drawing_candidates:
-                return "drawing_visualization"
-        
-        # 도면 검색 키워드 확인
-        if any(keyword in query for keyword in drawing_search_keywords):
-            # 도면 이름 후보가 있는지 확인
-            drawing_candidates = self.extract_drawing_names_from_query(query)
-            if drawing_candidates:
-                return "drawing_search"
-        
-        # 내부 데이터 키워드 확인 (웹 검색 금지)
-        if any(keyword in query for keyword in internal_keywords):
-            return "internal_data"
-        
-        # 변경/비교 키워드 확인
-        if any(keyword in query for keyword in change_keywords):
+        # 변경/비교 키워드 확인 (최우선)
+        if any(keyword in query_lower for keyword in change_keywords):
             return "change_analysis"
         
         # 비교 패턴 확인
@@ -668,81 +627,137 @@ class PIDExpertChatbot:
         
         return '\n'.join(context_parts)
 
-    def generate_response(self, user_query: str, use_web_search: bool = False, selected_drawing: str = None) -> Dict:
-        """챗봇 응답 생성 - 지능적 소스 선택 시스템"""
+    def generate_response(self, user_query: str, use_web_search: bool = False, selected_drawing: str = None, selected_files: List[Dict] = None) -> Dict:
+        """챗봇 응답 생성 - 변경 분석 중심"""
         try:
+            # 선택된 파일들 처리 및 디버그 정보 수집
+            selected_files_context = ""
+            file_details = []
+            ocr_data_included = False
+            detection_data_included = False
+            total_context_length = 0
+            
+            if selected_files and len(selected_files) > 0:
+                logger.info(f"📁 선택된 파일 {len(selected_files)}개 처리 중...")
+                
+                selected_files_context = "\n\n=== 선택된 P&ID 도면 기호 및 텍스트 탐지 결과 ===\n"
+                selected_files_context += "※ 다음 데이터는 P&ID 도면에서 AI가 자동으로 탐지한 계측기기 기호, 배관 기호, 텍스트 라벨 등을 포함합니다.\n\n"
+                
+                for i, file_data in enumerate(selected_files):
+                    file_name = file_data.get('name', f'파일_{i+1}')
+                    file_id = file_data.get('id', 'unknown')
+                    image_path = file_data.get('image_path')
+                    json_data = file_data.get('json_data')
+                    
+                    selected_files_context += f"\n**📋 P&ID 도면 {i+1}: {file_name} (ID: {file_id})**\n"
+                    
+                    # 파일별 상세 정보 초기화
+                    file_detail = {
+                        'name': file_name,
+                        'id': file_id,
+                        'ocr_count': 0,
+                        'detection_count': 0,
+                        'json_size': 0,
+                        'ocr_preview': '',
+                        'detection_preview': ''
+                    }
+                    
+                    # 이미지 정보
+                    if image_path and os.path.exists(image_path):
+                        selected_files_context += f"- 📷 도면 이미지 경로: {image_path}\n"
+                    else:
+                        selected_files_context += f"- 📷 도면 이미지: 없음\n"
+                    
+                    # JSON 데이터 상세 처리
+                    if json_data:
+                        file_detail['json_size'] = len(str(json_data))
+                        
+                        # OCR 텍스트 완전 추출 및 상세 포함
+                        ocr_texts = self._extract_ocr_texts(json_data)
+                        if ocr_texts:
+                            ocr_data_included = True
+                            file_detail['ocr_count'] = len(ocr_texts)
+                            file_detail['ocr_preview'] = ', '.join(ocr_texts[:10])
+                            
+                            selected_files_context += f"- 📝 **OCR 탐지 텍스트** (계측기 태그명, 라벨, 설비명 등 {len(ocr_texts)}개):\n"
+                            for j, text in enumerate(ocr_texts):
+                                selected_files_context += f"  {j+1}. \"{text}\"\n"
+                            selected_files_context += "\n"
+                        
+                        # Detection 정보 완전 추출 및 상세 포함
+                        detection_info = self._extract_detection_info(json_data)
+                        if detection_info:
+                            detection_data_included = True
+                            file_detail['detection_count'] = len(detection_info)
+                            labels = [d.get('label', 'Unknown') for d in detection_info]
+                            file_detail['detection_preview'] = ', '.join(labels[:10])
+                            
+                            selected_files_context += f"- 🎯 **객체 탐지 결과** (P&ID 기호, 계측기기, 밸브, 배관 등 {len(detection_info)}개):\n"
+                            for j, obj in enumerate(detection_info):
+                                label = obj.get('label', obj.get('id', f'객체{j+1}'))
+                                confidence = obj.get('confidence', 0)
+                                
+                                # 위치 정보 추출
+                                if 'boundingBox' in obj:
+                                    bbox = obj['boundingBox']
+                                    pos = f"({bbox.get('x', 0):.1f}, {bbox.get('y', 0):.1f})"
+                                elif all(k in obj for k in ['x', 'y']):
+                                    pos = f"({obj['x']}, {obj['y']})"
+                                else:
+                                    pos = "위치정보없음"
+                                
+                                if confidence > 0:
+                                    selected_files_context += f"  {j+1}. 🔧 {label} (탐지신뢰도: {confidence:.3f}, 도면좌표: {pos})\n"
+                                else:
+                                    selected_files_context += f"  {j+1}. 🔧 {label} (도면좌표: {pos})\n"
+                            selected_files_context += "\n"
+                        
+                        # JSON 원시 데이터 구조 정보 추가
+                        selected_files_context += f"- 📊 **AI 탐지 데이터 구조:**\n"
+                        if isinstance(json_data, dict):
+                            for key in json_data.keys():
+                                if key == 'ocr_data' or key == 'ocr':
+                                    selected_files_context += f"  • {key} (문자 인식 데이터)\n"
+                                elif key == 'detection_data' or key == 'detecting' or key == 'data':
+                                    selected_files_context += f"  • {key} (기호/객체 탐지 데이터)\n"
+                                else:
+                                    selected_files_context += f"  • {key}\n"
+                        selected_files_context += "\n"
+                        
+                    else:
+                        selected_files_context += f"- 📊 AI 탐지 데이터: 없음\n\n"
+                    
+                    file_details.append(file_detail)
+                
+                total_context_length = len(selected_files_context)
+                logger.info(f"✅ P&ID 도면 탐지 데이터 처리 완료: {len(selected_files)}개 파일")
+
             # 쿼리 유형 감지
             query_type = self._detect_query_type(user_query)
             
-            # 도면 검색 처리
-            search_results = []
-            auto_selected_drawing = None
-            
-            if query_type == "drawing_search":
-                logger.info(f"🔍 도면 검색 모드로 처리: {user_query}")
-                
-                # 질문에서 도면 이름 후보 추출
-                drawing_candidates = self.extract_drawing_names_from_query(user_query)
-                
-                for candidate in drawing_candidates:
-                    results = self.search_drawings_by_name(candidate)
-                    search_results.extend(results)
-                
-                # 중복 제거
-                unique_results = {}
-                for result in search_results:
-                    unique_results[result['d_name']] = result
-                search_results = list(unique_results.values())
-                
-                # 검색 결과가 1개인 경우 자동 선택
-                if len(search_results) == 1:
-                    auto_selected_drawing = search_results[0]['d_name']
-                    logger.info(f"🎯 자동 도면 선택: {auto_selected_drawing}")
-                elif len(search_results) > 1:
-                    # 가장 최근 수정된 도면 우선 선택
-                    latest_drawing = max(search_results, key=lambda x: x['latest_date'])
-                    auto_selected_drawing = latest_drawing['d_name']
-                    logger.info(f"🎯 최신 도면 자동 선택: {auto_selected_drawing}")
-            
-            elif query_type == "drawing_visualization":
-                logger.info(f"🎨 도면 시각화 모드로 처리: {user_query}")
-                
-                # 질문에서 도면 이름 후보 추출
-                drawing_candidates = self.extract_drawing_names_from_query(user_query)
-                
-                if drawing_candidates:
-                    # 첫 번째 후보로 시각화 시도
-                    candidate = drawing_candidates[0]
-                    
-                    # 도면 검색하여 존재 확인
-                    candidate_results = self.search_drawings_by_name(candidate)
-                    
-                    if candidate_results:
-                        # 최신 버전으로 시각화 수행
-                        auto_selected_drawing = candidate_results[0]['d_name']
-                        logger.info(f"🎨 시각화 대상 도면: {auto_selected_drawing}")
-                        
-                        # 직접 시각화 분석 수행
-                        viz_result = self.analyze_drawing_with_visualization(auto_selected_drawing, user_query)
-                        
-                        # 시각화가 성공한 경우 바로 반환
-                        if viz_result and viz_result.get('visualization'):
-                            return viz_result
-                        else:
-                            # 시각화 실패 시 일반 검색으로 폴백
-                            search_results = candidate_results
-                    else:
-                        logger.warning(f"⚠️ 시각화 요청된 도면 '{candidate}'를 찾을 수 없습니다")
-            
-            # 선택된 도면 우선순위: 자동 검색 > 사용자 선택
-            final_selected_drawing = auto_selected_drawing or selected_drawing
-            
-            # RAG 검색 수행
+            # 변경 분석 처리 (최우선)
             if query_type == "change_analysis":
                 logger.info(f"🔄 변경 분석 모드로 처리: {user_query}")
-                relevant_chunks = self.retrieve_change_analysis_chunks(user_query, top_k=5)
-            else:
-                relevant_chunks = self.retrieve_relevant_chunks(user_query, top_k=3)
+                
+                # 직접 변경 분석 수행 (도면 이름 상관없이 stream_dose_ai_1과 stream_dose_ai_3 비교)
+                change_result = self.analyze_drawing_changes(user_query)
+                
+                # 변경 분석이 성공한 경우 바로 반환
+                if change_result and change_result.get('visualization'):
+                    return change_result
+                else:
+                    logger.warning("⚠️ 변경 분석이 실패했습니다.")
+                    return {
+                        'response': "변경 분석 중 오류가 발생했습니다. stream_dose_ai_1.json과 stream_dose_ai_3.json 파일을 확인해주세요.",
+                        'sources': [],
+                        'query_type': 'change_analysis',
+                        'context_quality': 'none',
+                        'web_search_used': False,
+                        'visualization': None
+                    }
+            
+            # RAG 검색 수행 (일반 질문의 경우)
+            relevant_chunks = self.retrieve_relevant_chunks(user_query, top_k=3)
             
             # 유사도 기반 소스 선택 로직
             SIMILARITY_THRESHOLD = 0.4
@@ -761,54 +776,6 @@ class PIDExpertChatbot:
             web_search_used = False
             web_search_results = ""
             
-            # 도면 검색 결과 소스 추가
-            if search_results:
-                for result in search_results:
-                    sources.append({
-                        'type': 'drawing_search',
-                        'icon': '🔍',
-                        'source': f'도면 검색 결과 - {result["d_name"]}',
-                        'score': None,
-                        'page': None,
-                        'content_preview': f"버전: {result['version_count']}개, 최종수정: {result['latest_date']}, 등록자: {result['users']}",
-                        'quality': 'high'
-                    })
-            
-            # 선택된 도면 정보 추가
-            drawing_context = ""
-            if final_selected_drawing and final_selected_drawing != "선택하지 않음":
-                logger.info(f"📄 선택된 도면 정보 활용: {final_selected_drawing}")
-                
-                try:
-                    # 최신 버전의 도면 데이터 조회
-                    drawing_data = self.get_drawing_data_from_db(final_selected_drawing, "latest")
-                    
-                    if drawing_data:
-                        drawing_context = self.build_drawing_context(drawing_data, "선택된 도면")
-                        
-                        # 도면 소스 정보 추가 (중복 체크)
-                        existing_drawing_sources = [s for s in sources if s.get('type') == 'database' and final_selected_drawing in s.get('source', '')]
-                        
-                        if not existing_drawing_sources:
-                            sources.append({
-                                'type': 'database',
-                                'icon': '🗄️',
-                                'source': f'선택된 도면 - {final_selected_drawing}',
-                                'score': None,
-                                'page': None,
-                                'content_preview': f"등록일: {drawing_data.get('create_date')}, 등록자: {drawing_data.get('user')}",
-                                'quality': 'high'
-                            })
-                        
-                        logger.info(f"✅ 선택된 도면 데이터 조회 성공: {final_selected_drawing}")
-                    else:
-                        logger.warning(f"⚠️ 선택된 도면 데이터 조회 실패: {final_selected_drawing}")
-                        drawing_context = f"\n\n⚠️ 선택된 도면 '{final_selected_drawing}'의 데이터를 찾을 수 없습니다.\n"
-                        
-                except Exception as e:
-                    logger.error(f"선택된 도면 조회 중 오류: {e}")
-                    drawing_context = f"\n\n⚠️ 선택된 도면 조회 중 오류가 발생했습니다: {str(e)}\n"
-            
             # 고품질 RAG 데이터가 있는 경우
             if high_quality_chunks:
                 logger.info(f"📖 고품질 RAG 데이터 {len(high_quality_chunks)}개 발견 (유사도 ≥ {SIMILARITY_THRESHOLD})")
@@ -826,118 +793,44 @@ class PIDExpertChatbot:
                         'content_preview': chunk['content'][:200] + "..." if len(chunk['content']) > 200 else chunk['content'],
                         'quality': 'high'
                     })
-                
-                # 저품질 데이터도 있다면 추가 (참고용)
-                if low_quality_chunks:
-                    for chunk in low_quality_chunks:
-                        sources.append({
-                            'type': 'rag',
-                            'icon': '📖',
-                            'source': 'RAG 데이터베이스 (참고)',
-                            'score': chunk['score'],
-                            'page': chunk['page'],
-                            'content_preview': chunk['content'][:200] + "..." if len(chunk['content']) > 200 else chunk['content'],
-                            'quality': 'low'
-                        })
             
-            # 고품질 RAG 데이터가 없거나 부족한 경우 웹 검색 시도
-            # 단, internal_data 타입은 웹 검색 금지
-            if (not high_quality_chunks or len(high_quality_chunks) < 2) and query_type not in ["internal_data", "drawing_search"]:
-                logger.info(f"🌐 RAG 데이터 부족 (고품질: {len(high_quality_chunks)}개) - 웹 검색 시도")
-                
-                try:
-                    # GPT에게 인터넷 검색 요청
-                    web_search_prompt = f"""다음 질문에 대해 최신 정보를 제공해주세요. P&ID 및 공정 제어 관련 기술 정보를 포함해 주세요:
-
-질문: {user_query}
-
-답변 시 다음을 포함해 주세요:
-1. 최신 기술 동향
-2. 관련 표준 및 규격
-3. 실무적 적용 사례
-4. 안전 고려사항
-
-답변 출처를 명시하지 말고, 전문적이고 종합적인 정보를 제공해 주세요."""
-
-                    web_response = self.client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=[
-                            {"role": "system", "content": "당신은 P&ID 및 공정제어 전문가입니다. 최신 기술 정보와 실무 지식을 바탕으로 정확한 답변을 제공하세요."},
-                            {"role": "user", "content": web_search_prompt}
-                        ],
-                        temperature=0.3,
-                        max_tokens=1000
-                    )
-                    
-                    web_search_results = web_response.choices[0].message.content
-                    web_search_used = True
-                    
-                    # 웹 검색 소스 정보 추가
+            # 선택된 파일이 있는 경우 소스에 추가
+            if selected_files:
+                for file_data in selected_files:
                     sources.append({
-                        'type': 'web',
-                        'icon': '🌐',
-                        'source': '인터넷 검색 (GPT-4 기반)',
+                        'type': 'file',
+                        'icon': '📄',
+                        'source': f"선택된 파일: {file_data.get('name', 'Unknown')}",
                         'score': None,
                         'page': None,
-                        'content_preview': web_search_results[:200] + "..." if len(web_search_results) > 200 else web_search_results,
-                        'quality': 'web'
+                        'content_preview': f"파일 ID: {file_data.get('id')}, 등록일: {file_data.get('create_date')}",
+                        'quality': 'high'
                     })
-                    
-                    logger.info("✅ 웹 검색 완료")
-                    
-                except Exception as e:
-                    logger.error(f"웹 검색 실패: {e}")
-                    web_search_results = ""
-            elif query_type == "internal_data":
-                logger.info(f"🔒 내부 데이터 질문 - 웹 검색 스킵 (RAG 전용)")
-            elif query_type == "drawing_search":
-                logger.info(f"🔍 도면 검색 질문 - 웹 검색 스킵 (데이터베이스 전용)")
-            else:
-                logger.info(f"📖 RAG 데이터 충분 (고품질: {len(high_quality_chunks)}개) - 웹 검색 불필요")
             
-            # 프롬프트 생성
-            if query_type == "drawing_search":
-                system_prompt = self.create_drawing_search_prompt(user_query, search_results, rag_context)
-                max_tokens = 1800
-                temperature = 0.2
-            elif query_type == "change_analysis":
-                system_prompt = self.create_change_analysis_prompt(user_query, rag_context)
-                max_tokens = 2000
-                temperature = 0.2
-            elif query_type == "internal_data":
-                system_prompt = self.create_internal_data_prompt(user_query, rag_context)
-                max_tokens = 1800
-                temperature = 0.1  # 더 일관된 답변을 위해 낮은 temperature
-            else:
-                system_prompt = self.create_pid_expert_prompt(user_query, rag_context)
-                max_tokens = 1500
-                temperature = 0.3
+            # OpenAI API 호출을 위한 메시지 구성
+            messages = []
             
-            # 선택된 도면 정보가 있으면 시스템 프롬프트에 추가
-            if drawing_context and query_type != "drawing_search":
-                system_prompt += f"""
+            # 시스템 프롬프트 (선택된 파일 데이터를 상세히 포함)
+            system_prompt = f"""{self.expert_persona}
 
-**선택된 도면 정보:**
-{drawing_context}
+**참고 문서 정보:**
+{rag_context}
 
-위 선택된 도면 정보를 우선적으로 참고하여 답변해주세요. 특히 사용자의 질문이 이 도면과 관련된 내용이라면 도면의 구체적인 데이터를 활용해주세요."""
+**P&ID 도면 AI 탐지 데이터:**
+{selected_files_context}
+
+위 참고 문서와 선택된 P&ID 도면의 AI 탐지 결과를 바탕으로 사용자의 질문에 전문적이고 실용적인 답변을 제공해주세요. 
+
+**중요:** 제공된 탐지 데이터는 P&ID 도면에서 다음과 같이 분석된 결과입니다:
+- **OCR 탐지 텍스트**: 도면에서 인식된 계측기 태그명(FT-101, PT-201 등), 설비명, 라벨, 수치 등
+- **객체 탐지 결과**: AI가 식별한 P&ID 기호들 (계측기기, 밸브, 펌프, 배관, 제어기기 등)
+
+이러한 구체적인 P&ID 요소들을 활용하여 정확하고 상세한 도면 해석과 공정 분석을 제공해주세요."""
+
+            messages.append({"role": "system", "content": system_prompt})
             
-            # 웹 검색 결과가 있으면 프롬프트에 추가
-            if web_search_results:
-                system_prompt += f"""
-
-**추가 최신 정보 (웹 검색 결과):**
-{web_search_results}
-
-위 웹 검색 정보도 참고하여 최신 동향과 실무 정보를 포함한 종합적인 답변을 제공해주세요."""
-
-            # 컨텍스트 품질 평가
-            if drawing_context or high_quality_chunks or search_results:
-                context_quality = "high"
-            elif low_quality_chunks or web_search_results:
-                context_quality = "medium"
-            else:
-                context_quality = "low"
+            # 사용자 메시지 (텍스트만)
+            messages.append({"role": "user", "content": user_query})
             
             # OpenAI API 호출
             if not self.client:
@@ -945,42 +838,35 @@ class PIDExpertChatbot:
                     'response': "OpenAI API 키가 설정되지 않았습니다. .env 파일을 확인해주세요.",
                     'sources': sources,
                     'query_type': query_type,
-                    'context_quality': context_quality,
+                    'context_quality': 'none',
                     'web_search_used': web_search_used,
                     'similarity_threshold': SIMILARITY_THRESHOLD,
-                    'selected_drawing': final_selected_drawing,
-                    'search_results': search_results
+                    'selected_drawing': selected_drawing,
+                    'selected_files_count': len(selected_files) if selected_files else 0
                 }
             
             try:
+                # 항상 gpt-4o-mini 사용 (Vision API 사용하지 않음)
                 response = self.client.chat.completions.create(
                     model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_query}
-                    ],
-                    temperature=temperature,
-                    max_tokens=max_tokens
+                    messages=messages,
+                    temperature=0.3,
+                    max_tokens=2000
                 )
                 
                 ai_response = response.choices[0].message.content
+                
+                # 응답에 파일 정보 추가
+                if selected_files:
+                    file_info = f"\n\n📁 **분석된 파일 ({len(selected_files)}개):**\n"
+                    for file_data in selected_files:
+                        file_info += f"• {file_data.get('name', 'Unknown')} (ID: {file_data.get('id')})\n"
+                    ai_response += file_info
                 
                 # 응답에 소스 정보 표시 추가
                 source_info = self._build_source_summary(sources, SIMILARITY_THRESHOLD)
                 if source_info:
                     ai_response += f"\n\n{source_info}"
-                
-                # 특별 모드 표시
-                if query_type == "drawing_search":
-                    ai_response = f"🔍 **도면 검색 모드** (발견: {len(search_results)}개)\n\n" + ai_response
-                elif query_type == "change_analysis":
-                    ai_response = "🔄 **변경 분석 모드**\n\n" + ai_response
-                
-                # 자동 선택된 도면이 있는 경우 표시
-                if auto_selected_drawing:
-                    ai_response = f"🎯 **자동 선택된 도면: {auto_selected_drawing}**\n\n" + ai_response
-                elif final_selected_drawing and final_selected_drawing != "선택하지 않음":
-                    ai_response = f"📄 **분석 기준 도면: {final_selected_drawing}**\n\n" + ai_response
                 
             except Exception as e:
                 logger.error(f"OpenAI API 호출 실패: {e}")
@@ -992,27 +878,29 @@ class PIDExpertChatbot:
                 'user_query': user_query,
                 'response': ai_response,
                 'query_type': query_type,
-                'context_quality': context_quality,
+                'context_quality': 'high' if high_quality_chunks or selected_files else 'medium',
                 'sources_count': len(sources),
                 'web_search_used': web_search_used,
                 'similarity_threshold': SIMILARITY_THRESHOLD,
-                'selected_drawing': final_selected_drawing,
-                'search_results_count': len(search_results)
+                'selected_drawing': selected_drawing,
+                'selected_files_count': len(selected_files) if selected_files else 0,
+                'images_processed': 0  # 이미지 처리하지 않으므로 0
             })
             
             return {
                 'response': ai_response,
                 'sources': sources,
                 'query_type': query_type,
-                'context_quality': context_quality,
+                'context_quality': 'high' if high_quality_chunks or selected_files else 'medium',
                 'web_search_used': web_search_used,
                 'similarity_threshold': SIMILARITY_THRESHOLD,
-                'high_quality_sources': len(high_quality_chunks),
-                'low_quality_sources': len(low_quality_chunks),
-                'selected_drawing': final_selected_drawing,
-                'drawing_context_used': bool(drawing_context),
-                'search_results': search_results,
-                'auto_selected_drawing': auto_selected_drawing
+                'selected_drawing': selected_drawing,
+                'selected_files_count': len(selected_files) if selected_files else 0,
+                # 디버그 정보에 파일 상세 정보 추가
+                'ocr_data_included': ocr_data_included,
+                'detection_data_included': detection_data_included,
+                'total_context_length': total_context_length,
+                'file_details': file_details
             }
             
         except Exception as e:
@@ -1025,7 +913,7 @@ class PIDExpertChatbot:
                 'web_search_used': False,
                 'similarity_threshold': 0.4,
                 'selected_drawing': selected_drawing,
-                'search_results': []
+                'selected_files_count': len(selected_files) if selected_files else 0
             }
 
     def _build_source_summary(self, sources: List[Dict], threshold: float) -> str:
@@ -1270,26 +1158,28 @@ class PIDExpertChatbot:
             extracted_text = self.extract_text_from_drawing_data(drawing_data)
             
             # 요약 생성을 위한 프롬프트
-            summary_prompt = f"""당신은 P&ID 도면 분석 전문가입니다. 다음 도면 정보를 바탕으로 전문적이고 구조화된 요약을 작성해주세요.
+            summary_prompt = f"""당신은 P&ID 도면 분석 전문가입니다. 다음 P&ID 도면의 AI 탐지 결과를 바탕으로 전문적이고 구조화된 도면 요약을 작성해주세요.
 
-**도면 정보:**
+**📋 P&ID 도면 정보:**
 - 파일명: {drawing_data.get('d_name')}
 - 등록일: {drawing_data.get('create_date')}
 - 등록자: {drawing_data.get('user')}
 
-**추출된 텍스트:**
-{extracted_text if extracted_text else '텍스트 정보 없음'}
+**🔍 AI가 P&ID 도면에서 탐지한 텍스트 (계측기 태그명, 설비명, 라벨 등):**
+{extracted_text if extracted_text else 'AI 텍스트 탐지 결과 없음 - 이미지 기반 분석 필요'}
+
+**중요:** 위 텍스트는 AI가 P&ID 도면에서 자동으로 인식한 계측기 태그명(FT-101, PT-201 등), 설비명, 배관 번호, 제어 정보 등입니다.
 
 **요약 구조:**
-1. **도면 개요** (도면의 목적과 주요 기능)
-2. **주요 구성 요소** (계측기기, 밸브, 펌프 등)
-3. **제어 시스템** (제어 루프 및 안전장치)
-4. **운전 특성** (주요 운전 조건 및 절차)
-5. **안전 고려사항** (안전장치 및 비상대응)
+1. **P&ID 도면 개요** (도면의 공정 목적과 주요 기능)
+2. **주요 P&ID 구성 요소** (탐지된 계측기기, 밸브, 펌프, 탱크 등)
+3. **제어 시스템 분석** (제어 루프, 인터록, 안전장치)
+4. **공정 운전 특성** (주요 운전 조건 및 절차)
+5. **안전 시스템 검토** (안전장치 및 비상대응 시스템)
 
-각 섹션을 명확히 구분하여 작성하고, 가능한 한 구체적인 태그 번호나 설비명을 포함해주세요.
-추출된 텍스트가 부족하다면 일반적인 P&ID 분석 원칙에 따라 보완 설명을 제공하되, 
-"추출된 정보 기반" vs "일반적 설명" 을 명확히 구분해주세요."""
+각 섹션을 명확히 구분하여 작성하고, AI가 탐지한 구체적인 계측기 태그 번호나 설비명을 적극 활용해주세요.
+탐지된 텍스트가 부족한 경우 일반적인 P&ID 분석 원칙에 따라 보완 설명을 제공하되, 
+"AI 탐지 정보 기반" vs "일반적 P&ID 해석" 을 명확히 구분해주세요."""
 
             # OpenAI API 호출
             if not self.client:
@@ -1495,8 +1385,8 @@ class PIDExpertChatbot:
         # 도면 이름 패턴들
         drawing_patterns = [
             r'([a-zA-Z0-9_\-]+\.(?:pdf|png|jpg|jpeg))',  # 확장자 포함 파일명
-            r'([a-zA-Z0-9_\-]{3,})',  # 3자리 이상 영숫자+언더스코어
-            r'([가-힣]{2,})',  # 2자리 이상 한글
+            r'(stream_[a-zA-Z0-9_\-]+)',  # stream으로 시작하는 파일명
+            r'([a-zA-Z0-9_\-]{5,})',  # 5자리 이상 영숫자+언더스코어
         ]
         
         # 도면 관련 키워드가 포함된 경우만 처리
@@ -1524,14 +1414,36 @@ class PIDExpertChatbot:
             matches = re.findall(pattern, query)
             candidates.update(matches)
         
-        # 너무 짧거나 긴 후보 필터링
+        # 불필요한 단어들 제외
+        exclude_words = {
+            '도면', '파일', '그림', '이미지', '분석', '비교', '변경', '차이',
+            '도면의', '파일의', '그림의', '이미지의', '것', '것의', '부분',
+            '내용', '정보', '데이터', '결과', '출력', '입력', '처리'
+        }
+        
+        # 너무 짧거나 긴 후보 필터링 및 제외 단어 필터링
         filtered_candidates = []
         for candidate in candidates:
             candidate = candidate.strip()
-            if 2 <= len(candidate) <= 50 and candidate not in ['도면', '파일', '그림']:
+            if (3 <= len(candidate) <= 50 and 
+                candidate.lower() not in exclude_words and
+                not candidate.lower().endswith('의') and
+                not candidate.lower().startswith('의')):
                 filtered_candidates.append(candidate)
         
-        return list(filtered_candidates)
+        # 특별히 stream_dose_ai 패턴 우선 처리
+        special_patterns = [
+            r'(stream_dose_ai_\d+)',
+            r'(stream_does_ai_\d+)',
+        ]
+        
+        for pattern in special_patterns:
+            matches = re.findall(pattern, query, re.IGNORECASE)
+            for match in matches:
+                if match not in filtered_candidates:
+                    filtered_candidates.insert(0, match)  # 앞에 추가
+        
+        return list(set(filtered_candidates))  # 중복 제거
 
     def create_drawing_search_prompt(self, user_question, search_results, rag_context):
         """도면 검색 전용 프롬프트 생성"""
@@ -1940,31 +1852,31 @@ class PIDExpertChatbot:
             extracted_text = self.extract_text_from_drawing_data(drawing_data)
             
             # AI 분석 프롬프트 생성
-            analysis_prompt = f"""당신은 P&ID 도면 분석 전문가입니다. 다음 도면을 분석하고 시각화 결과를 설명해주세요.
+            analysis_prompt = f"""당신은 P&ID 도면 분석 전문가입니다. 다음 P&ID 도면의 AI 탐지 결과를 분석하고 시각화 결과를 설명해주세요.
 
-**도면 정보:**
+**📋 P&ID 도면 정보:**
 - 파일명: {d_name}
 - 등록일: {drawing_data.get('create_date')}
 - 이미지 크기: {viz_result['original_size']} → {viz_result['resized_size']}
-- OCR 텍스트: {viz_result['ocr_count']}개
-- Detection 객체: {viz_result['detection_count']}개
+- AI 탐지된 OCR 텍스트: {viz_result['ocr_count']}개 (계측기 태그, 라벨 등)
+- AI 탐지된 P&ID 기호: {viz_result['detection_count']}개 (계측기기, 밸브, 배관 등)
 
-**추출된 텍스트:**
-{extracted_text if extracted_text else '텍스트 정보 없음'}
+**🔍 AI가 P&ID 도면에서 탐지한 텍스트 (계측기 태그명, 설비명, 라벨 등):**
+{extracted_text if extracted_text else 'AI 텍스트 탐지 결과 없음'}
 
-**시각화 결과:**
+**🎯 AI 탐지 및 시각화 결과:**
 {viz_result['analysis_summary']}
 
 {"**사용자 질문:** " + user_question if user_question else ""}
 
 **분석 요청:**
-1. **도면 개요**: 이 도면의 주요 목적과 특징
-2. **OCR 분석**: 추출된 텍스트에서 발견된 주요 정보 (계측기 태그, 설비명 등)
-3. **Detection 분석**: 감지된 객체들의 특징과 배치
-4. **시각화 설명**: 파란색 박스(OCR)와 빨간색 박스(Detection)로 표시된 내용
-5. **종합 평가**: 도면의 완성도와 주요 특징점
+1. **P&ID 도면 개요**: 이 도면의 주요 공정 목적과 특징
+2. **OCR 탐지 분석**: AI가 인식한 텍스트에서 발견된 주요 계측기 태그, 설비명, 제어 정보
+3. **기호 탐지 분석**: AI가 감지한 P&ID 기호들(계측기기, 밸브, 펌프 등)의 특징과 배치
+4. **시각화 해석**: 파란색 박스(OCR 텍스트)와 빨간색 박스(P&ID 기호)로 표시된 내용의 의미
+5. **공정 분석**: 탐지된 요소들을 종합한 공정 흐름과 제어 시스템 분석
 
-시각화된 이미지에서 파란색 박스는 OCR로 추출된 텍스트 영역이고, 빨간색 박스는 객체 인식 결과입니다."""
+시각화된 이미지에서 파란색 박스는 AI가 인식한 텍스트 영역이고, 빨간색 박스는 AI가 탐지한 P&ID 기호 영역입니다."""
 
             # OpenAI API 호출
             if not self.client:
@@ -1995,11 +1907,11 @@ class PIDExpertChatbot:
 - **등록일:** {drawing_data.get('create_date')}
 - **등록자:** {drawing_data.get('user')}
 
-**🖼️ 시각화 정보:**
+**🖼️ AI 탐지 및 시각화 정보:**
 - **원본 크기:** {viz_result['original_size'][0]} × {viz_result['original_size'][1]}
 - **분석 크기:** {viz_result['resized_size'][0]} × {viz_result['resized_size'][1]}
-- **OCR 텍스트:** {viz_result['ocr_count']}개 (파란색 박스)
-- **Detection 객체:** {viz_result['detection_count']}개 (빨간색 박스)
+- **AI 탐지 텍스트:** {viz_result['ocr_count']}개 (계측기 태그, 설비명, 라벨 - 파란색 박스)
+- **AI 탐지 P&ID 기호:** {viz_result['detection_count']}개 (계측기기, 밸브, 배관 등 - 빨간색 박스)
 
 ---
 
@@ -2007,9 +1919,9 @@ class PIDExpertChatbot:
 
 ---
 
-**📌 시각화 범례:**
-- 🔵 **파란색 박스**: OCR로 추출된 텍스트 영역
-- 🔴 **빨간색 박스**: AI가 감지한 객체 (계측기, 밸브, 배관 등)
+**📌 AI 탐지 시각화 범례:**
+- 🔵 **파란색 박스**: AI가 인식한 텍스트 영역 (계측기 태그명, 설비명, 라벨 등)
+- 🔴 **빨간색 박스**: AI가 탐지한 P&ID 기호 (계측기, 밸브, 배관, 펌프 등)
 """
             
             # 소스 정보 구성
@@ -2043,3 +1955,436 @@ class PIDExpertChatbot:
                 'web_search_used': False,
                 'visualization': None
             }
+
+    def compare_and_visualize_changes(self) -> Optional[Dict]:
+        """
+        stream_dose_ai_1.json과 stream_dose_ai_3.json을 비교하여 변경된 부분만 빨간색으로 표시하는 시각화
+        
+        Returns:
+            변경 비교 시각화 결과
+        """
+        # 고정된 파일 경로
+        as_is_json_path = "uploads/detection_results/stream_dose_ai_1.json"
+        to_be_json_path = "uploads/detection_results/stream_dose_ai_3.json"
+        as_is_image_path = "uploads/uploaded_images/stream_dose_ai_1.png"
+        to_be_image_path = "uploads/uploaded_images/stream_dose_ai_3.png"
+        
+        try:
+            # JSON 파일들 로드
+            with open(as_is_json_path, 'r', encoding='utf-8') as f:
+                as_is_data = json.load(f)
+            
+            with open(to_be_json_path, 'r', encoding='utf-8') as f:
+                to_be_data = json.load(f)
+            
+            # 이미지 존재 확인
+            if not os.path.exists(as_is_image_path) or not os.path.exists(to_be_image_path):
+                logger.error(f"이미지 파일을 찾을 수 없습니다: {as_is_image_path}, {to_be_image_path}")
+                return None
+            
+            # 변경사항 분석
+            changes = self._analyze_detection_changes(as_is_data, to_be_data)
+            
+            # as-is 이미지 시각화
+            as_is_result = self._visualize_comparison_image(
+                as_is_image_path, as_is_data, changes['removed'], 
+                "AS-IS (제거된 객체)", "red"
+            )
+            
+            # to-be 이미지 시각화  
+            to_be_result = self._visualize_comparison_image(
+                to_be_image_path, to_be_data, changes['added'], 
+                "TO-BE (추가된 객체)", "red"
+            )
+            
+            # 변경 통계
+            change_stats = {
+                'total_as_is': len(as_is_data['data']['boxes']),
+                'total_to_be': len(to_be_data['data']['boxes']),
+                'removed_count': len(changes['removed']),
+                'added_count': len(changes['added']),
+                'unchanged_count': len(changes['unchanged']),
+                'modified_count': len(changes['modified'])
+            }
+            
+            result = {
+                'as_is_image': as_is_result,
+                'to_be_image': to_be_result,
+                'changes': changes,
+                'statistics': change_stats,
+                'analysis_summary': self._generate_change_summary(changes, change_stats)
+            }
+            
+            logger.info(f"변경 비교 완료: 제거 {change_stats['removed_count']}개, 추가 {change_stats['added_count']}개")
+            return result
+            
+        except Exception as e:
+            logger.error(f"변경 비교 시각화 실패: {e}")
+            return None
+
+    def _analyze_detection_changes(self, as_is_data: Dict, to_be_data: Dict) -> Dict:
+        """
+        Detection 데이터의 변경사항을 분석
+        
+        Args:
+            as_is_data: as-is JSON 데이터
+            to_be_data: to-be JSON 데이터
+        
+        Returns:
+            변경사항 분석 결과
+        """
+        as_is_boxes = {box['id']: box for box in as_is_data['data']['boxes']}
+        to_be_boxes = {box['id']: box for box in to_be_data['data']['boxes']}
+        
+        as_is_ids = set(as_is_boxes.keys())
+        to_be_ids = set(to_be_boxes.keys())
+        
+        # 변경 유형별 분류
+        removed_ids = as_is_ids - to_be_ids  # as-is에만 있음 (제거됨)
+        added_ids = to_be_ids - as_is_ids    # to-be에만 있음 (추가됨)
+        common_ids = as_is_ids & to_be_ids   # 둘 다 있음
+        
+        # 공통 ID 중에서 변경된 것과 변경되지 않은 것 구분
+        modified_ids = set()
+        unchanged_ids = set()
+        
+        for obj_id in common_ids:
+            as_is_box = as_is_boxes[obj_id]
+            to_be_box = to_be_boxes[obj_id]
+            
+            # 위치나 라벨이 변경되었는지 확인
+            if (as_is_box['label'] != to_be_box['label'] or
+                abs(float(as_is_box['x']) - float(to_be_box['x'])) > 5 or
+                abs(float(as_is_box['y']) - float(to_be_box['y'])) > 5 or
+                abs(float(as_is_box['width']) - float(to_be_box['width'])) > 5 or
+                abs(float(as_is_box['height']) - float(to_be_box['height'])) > 5):
+                modified_ids.add(obj_id)
+            else:
+                unchanged_ids.add(obj_id)
+        
+        return {
+            'removed': [as_is_boxes[obj_id] for obj_id in removed_ids],
+            'added': [to_be_boxes[obj_id] for obj_id in added_ids],
+            'modified': {
+                'as_is': [as_is_boxes[obj_id] for obj_id in modified_ids],
+                'to_be': [to_be_boxes[obj_id] for obj_id in modified_ids]
+            },
+            'unchanged': [as_is_boxes[obj_id] for obj_id in unchanged_ids]
+        }
+
+    def _visualize_comparison_image(self, image_path: str, json_data: Dict, 
+                                  highlight_objects: List[Dict], title: str, 
+                                  highlight_color: str = "red") -> Dict:
+        """
+        비교 시각화를 위한 이미지 처리
+        
+        Args:
+            image_path: 이미지 파일 경로
+            json_data: JSON 데이터
+            highlight_objects: 강조할 객체 리스트
+            title: 이미지 제목
+            highlight_color: 강조 색상
+        
+        Returns:
+            시각화된 이미지 정보
+        """
+        try:
+            # 이미지 로드
+            original_image = Image.open(image_path)
+            
+            # JSON에서 예상 크기 가져오기
+            expected_width = json_data['data'].get('width', original_image.width)
+            expected_height = json_data['data'].get('height', original_image.height)
+            
+            # 이미지 크기 조정
+            if original_image.size != (expected_width, expected_height):
+                image = original_image.resize((expected_width, expected_height), Image.Resampling.LANCZOS)
+            else:
+                image = original_image.copy()
+            
+            # 그리기 객체 생성
+            draw = ImageDraw.Draw(image)
+            
+            # 폰트 설정
+            try:
+                font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 12)
+                title_font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 16)
+            except:
+                font = ImageFont.load_default()
+                title_font = ImageFont.load_default()
+            
+            # 모든 객체를 회색으로 그리기 (배경)
+            for box in json_data['data']['boxes']:
+                self._draw_detection_box(draw, box, "lightgray", font, width=1)
+            
+            # 강조할 객체들을 빨간색으로 그리기
+            highlight_ids = {obj['id'] for obj in highlight_objects}
+            for box in json_data['data']['boxes']:
+                if box['id'] in highlight_ids:
+                    self._draw_detection_box(draw, box, highlight_color, font, width=3)
+            
+            # 제목 추가
+            draw.text((10, 10), title, fill="black", font=title_font)
+            
+            # 이미지를 Base64로 인코딩
+            img_buffer = io.BytesIO()
+            image.save(img_buffer, format='PNG', quality=95)
+            img_base64 = base64.b64encode(img_buffer.getvalue()).decode()
+            
+            return {
+                'title': title,
+                'image_base64': img_base64,
+                'original_size': original_image.size,
+                'resized_size': (expected_width, expected_height),
+                'highlight_count': len(highlight_objects),
+                'total_objects': len(json_data['data']['boxes'])
+            }
+            
+        except Exception as e:
+            logger.error(f"비교 이미지 시각화 실패: {e}")
+            return None
+
+    def _draw_detection_box(self, draw: ImageDraw.Draw, box: Dict, color: str, font, width: int = 2):
+        """
+        Detection 박스를 그리는 헬퍼 함수
+        
+        Args:
+            draw: PIL ImageDraw 객체
+            box: 박스 정보
+            color: 색상
+            font: 폰트
+            width: 선 두께
+        """
+        try:
+            # 좌표 정보
+            x = float(box['x'])
+            y = float(box['y'])
+            w = float(box['width'])
+            h = float(box['height'])
+            
+            # 박스 그리기
+            draw.rectangle([x, y, x + w, y + h], outline=color, width=width)
+            
+            # 라벨 그리기
+            label = box.get('label', 'Unknown')
+            obj_id = box.get('id', '')
+            text = f"{obj_id}: {label}"
+            
+            # 텍스트 배경
+            if color != "lightgray":  # 강조 객체만 라벨 표시
+                text_bbox = draw.textbbox((x, y-20), text, font=font)
+                draw.rectangle(text_bbox, fill=color)
+                draw.text((x, y-20), text, fill='white', font=font)
+                
+        except Exception as e:
+            logger.warning(f"Detection 박스 그리기 실패: {e}")
+
+    def _generate_change_summary(self, changes: Dict, stats: Dict) -> str:
+        """
+        변경사항 요약 생성
+        
+        Args:
+            changes: 변경사항 데이터
+            stats: 통계 정보
+        
+        Returns:
+            변경사항 요약 텍스트
+        """
+        summary = f"""📊 **변경사항 분석 결과**
+
+**📈 전체 통계:**
+- AS-IS 총 객체: {stats['total_as_is']}개
+- TO-BE 총 객체: {stats['total_to_be']}개
+- 변경되지 않음: {stats['unchanged_count']}개
+- 수정됨: {stats['modified_count']}개
+- 제거됨: {stats['removed_count']}개
+- 추가됨: {stats['added_count']}개
+
+**🔴 제거된 객체 ({stats['removed_count']}개):**"""
+        
+        if changes['removed']:
+            for obj in changes['removed']:
+                summary += f"\n- ID {obj['id']}: {obj['label']} (위치: {obj['x']}, {obj['y']})"
+        else:
+            summary += "\n- 없음"
+        
+        summary += f"\n\n**🟢 추가된 객체 ({stats['added_count']}개):**"
+        
+        if changes['added']:
+            for obj in changes['added']:
+                summary += f"\n- ID {obj['id']}: {obj['label']} (위치: {obj['x']}, {obj['y']})"
+        else:
+            summary += "\n- 없음"
+        
+        if stats['modified_count'] > 0:
+            summary += f"\n\n**🟡 수정된 객체 ({stats['modified_count']}개):**"
+            for as_is_obj, to_be_obj in zip(changes['modified']['as_is'], changes['modified']['to_be']):
+                summary += f"\n- ID {as_is_obj['id']}: {as_is_obj['label']} → {to_be_obj['label']}"
+                if as_is_obj['label'] != to_be_obj['label']:
+                    summary += f" (라벨 변경)"
+                if (abs(float(as_is_obj['x']) - float(to_be_obj['x'])) > 5 or 
+                    abs(float(as_is_obj['y']) - float(to_be_obj['y'])) > 5):
+                    summary += f" (위치 변경: {as_is_obj['x']},{as_is_obj['y']} → {to_be_obj['x']},{to_be_obj['y']})"
+        
+        return summary
+
+    def analyze_drawing_changes(self, user_question: str = None) -> Dict:
+        """
+        도면 변경사항 분석 및 시각화를 통합하여 수행
+        
+        Args:
+            user_question: 사용자 질문 (선택사항)
+        
+        Returns:
+            변경분석 결과와 시각화 이미지가 포함된 응답
+        """
+        try:
+            # 변경사항 비교 및 시각화 수행
+            comparison_result = self.compare_and_visualize_changes()
+            
+            if not comparison_result:
+                return {
+                    'response': "❌ 도면 변경사항 분석에 실패했습니다.",
+                    'sources': [],
+                    'query_type': 'change_analysis',
+                    'context_quality': 'none',
+                    'web_search_used': False,
+                    'visualization': None
+                }
+            
+            # AI 분석 프롬프트 생성
+            analysis_prompt = f"""당신은 P&ID 도면 변경관리 전문가입니다. 다음 P&ID 도면의 AI 탐지 결과 변경사항을 분석해주세요.
+
+**🔄 P&ID 도면 AI 탐지 변경사항 통계:**
+{comparison_result['analysis_summary']}
+
+**중요:** 분석 데이터는 두 P&ID 도면에서 AI가 자동으로 탐지한 다음 요소들의 변경사항입니다:
+- **P&ID 기호**: 계측기기, 밸브, 펌프, 탱크, 열교환기 등의 공정 기호
+- **텍스트 라벨**: 계측기 태그명(FT-101, PT-201 등), 설비명, 배관 번호 등
+- **제어 요소**: 제어 루프, 인터록, 안전장치 등
+
+**분석 요청:**
+1. **변경사항 개요**: 전체적인 변경의 성격과 공정 개선 목적 추정
+2. **제거된 P&ID 요소 분석**: 제거된 계측기기나 기호가 공정에 미치는 영향
+3. **추가된 P&ID 요소 분석**: 새로 추가된 계측기기나 기호의 역할과 목적
+4. **공정 안전성 영향**: 변경이 공정 안전성 및 제어 시스템에 미치는 영향
+5. **운전 절차 영향**: 변경이 공정 운전 및 유지보수에 미치는 영향
+6. **엔지니어링 권장사항**: P&ID 변경사항 검토 시 추가로 고려해야 할 기술적 사항
+
+{"**사용자 질문:** " + user_question if user_question else ""}
+
+시각화된 이미지에서 빨간색으로 표시된 부분이 AI가 탐지한 변경된 P&ID 기호 및 텍스트입니다."""
+
+            # OpenAI API 호출
+            if not self.client:
+                ai_response = "OpenAI API 키가 설정되지 않았습니다."
+            else:
+                try:
+                    response = self.client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {"role": "system", "content": "당신은 20년 경력의 P&ID 전문가입니다. 도면 변경사항을 전문적으로 분석하고 안전성을 최우선으로 검토합니다."},
+                            {"role": "user", "content": analysis_prompt}
+                        ],
+                        temperature=0.2,
+                        max_tokens=2000
+                    )
+                    
+                    ai_response = response.choices[0].message.content
+                    
+                except Exception as e:
+                    logger.error(f"OpenAI API 호출 실패: {e}")
+                    ai_response = f"AI 분석 중 오류가 발생했습니다: {str(e)}"
+            
+            # 최종 응답 구성
+            final_response = f"""🔄 **도면 변경사항 분석 결과**
+
+**📊 AI 탐지 변경 통계:**
+- **AS-IS (stream_dose_ai_1)**: {comparison_result['statistics']['total_as_is']}개 P&ID 기호/텍스트
+- **TO-BE (stream_dose_ai_3)**: {comparison_result['statistics']['total_to_be']}개 P&ID 기호/텍스트
+- **제거된 요소**: {comparison_result['statistics']['removed_count']}개 (빨간색 표시)
+- **추가된 요소**: {comparison_result['statistics']['added_count']}개 (빨간색 표시)
+
+---
+
+{ai_response}
+
+---
+
+**📌 AI 탐지 변경사항 시각화 범례:**
+- 🔴 **빨간색 박스**: AI가 탐지한 변경된 P&ID 기호 및 텍스트 (제거/추가)
+- ⚪ **회색 박스**: 변경되지 않은 P&ID 기호 및 텍스트
+
+**📋 상세 변경 내역:**
+{comparison_result['analysis_summary']}
+"""
+            
+            # 소스 정보 구성
+            sources = [{
+                'type': 'change_analysis',
+                'icon': '🔄',
+                'source': '도면 변경사항 비교 분석',
+                'score': None,
+                'page': None,
+                'content_preview': f"AS-IS vs TO-BE 비교: 제거 {comparison_result['statistics']['removed_count']}개, 추가 {comparison_result['statistics']['added_count']}개",
+                'quality': 'high'
+            }]
+            
+            return {
+                'response': final_response,
+                'sources': sources,
+                'query_type': 'change_analysis',
+                'context_quality': 'high',
+                'web_search_used': False,
+                'visualization': comparison_result,
+                'change_statistics': comparison_result['statistics']
+            }
+            
+        except Exception as e:
+            logger.error(f"도면 변경사항 분석 실패: {e}")
+            return {
+                'response': f"도면 변경사항 분석 중 오류가 발생했습니다: {str(e)}",
+                'sources': [],
+                'query_type': 'change_analysis',
+                'context_quality': 'none',
+                'web_search_used': False,
+                'visualization': None
+            }
+
+    def _extract_ocr_texts(self, json_data: Dict) -> List[str]:
+        """JSON 데이터에서 OCR 텍스트 추출"""
+        ocr_texts = []
+        
+        try:
+            if 'ocr_data' in json_data and json_data['ocr_data']:
+                ocr_data = json_data['ocr_data']
+                if 'images' in ocr_data:
+                    for image in ocr_data['images']:
+                        if 'fields' in image:
+                            for field in image['fields']:
+                                if 'inferText' in field and field['inferText']:
+                                    ocr_texts.append(field['inferText'])
+        except Exception as e:
+            logger.error(f"OCR 텍스트 추출 실패: {e}")
+        
+        return ocr_texts
+
+    def _extract_detection_info(self, json_data: Dict) -> List[Dict]:
+        """JSON 데이터에서 Detection 정보 추출"""
+        detection_info = []
+        
+        try:
+            # detection_data에서 추출
+            if 'detection_data' in json_data and json_data['detecting']:
+                detection_data = json_data['detecting']
+                if 'detections' in detection_data:
+                    detection_info.extend(detection_data['detecting'])
+            
+            # data.boxes에서 추출 (다른 형식)
+            elif 'data' in json_data and json_data['data'] and 'boxes' in json_data['data']:
+                detection_info.extend(json_data['data']['boxes'])
+                
+        except Exception as e:
+            logger.error(f"Detection 정보 추출 실패: {e}")
+        
+        return detection_info
