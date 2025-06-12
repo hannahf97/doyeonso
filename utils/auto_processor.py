@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+"""
+자동 파일 처리 유틸리티
+업로드된 파일을 OCR 처리하고 통합 JSON으로 변환한 후 데이터베이스에 저장
+"""
+
 import os
 import json
 import uuid

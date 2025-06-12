@@ -76,3 +76,9 @@ docker-compose.override.yml
 
 # Nested git repositories
 doyeonso/ 
+
+
+
+# RAG 시스템 캐시 (자동 생성됨)
+state/
+*.pkl 

@@ -7,11 +7,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # 페이지 임포트
-from pages import file_upload, file_list, database_view
+from pages import home, file_upload, file_list, chat_bot, help, database_admin, preprocessing_analysis, database_view
 
 def main():
     st.set_page_config(
-        page_title="Doyeonso",
+        page_title="도연소 (DoyeonSo)",
         page_icon="🐻",
         layout="wide",
         initial_sidebar_state="expanded"
@@ -20,20 +20,39 @@ def main():
     # 사이드바 메뉴
     with st.sidebar:
         selected = option_menu(
-            menu_title="Doyeonso",
-            options=["파일 업로드", "파일 목록", "데이터베이스 조회"],
-            icons=["upload", "list", "table"],
+            menu_title="도연소 (DoyeonSo)",
+            options=[
+                "🏠 홈", 
+                "🔧 P&ID 전문가 챗봇", 
+                "📤 파일 업로드", 
+                "📋 파일 목록", 
+                "💾 데이터베이스 조회",
+                "🔍 전처리 분석",
+                "⚙️ 데이터베이스 관리",
+                "❓ 도움말"
+            ],
+            icons=["house", "robot", "upload", "list", "table", "search", "gear", "question-circle"],
             menu_icon="bear",
             default_index=0,
         )
     
     # 페이지 라우팅
-    if selected == "파일 업로드":
+    if selected == "🏠 홈":
+        home.show()
+    elif selected == "🔧 P&ID 전문가 챗봇":
+        chat_bot.show()
+    elif selected == "📤 파일 업로드":
         file_upload.show()
-    elif selected == "파일 목록":
+    elif selected == "📋 파일 목록":
         file_list.show()
-    elif selected == "데이터베이스 조회":
+    elif selected == "💾 데이터베이스 조회":
         database_view.show()
+    elif selected == "🔍 전처리 분석":
+        preprocessing_analysis.show_preprocessing_analysis()
+    elif selected == "⚙️ 데이터베이스 관리":
+        database_admin.show()
+    elif selected == "❓ 도움말":
+        help.show()
 
 if __name__ == "__main__":
     main() 
