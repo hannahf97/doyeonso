@@ -7,6 +7,7 @@
 import os
 import json
 import uuid
+import re
 from datetime import datetime
 from typing import Dict, Any, Tuple, Optional
 from PIL import Image
@@ -17,6 +18,27 @@ from utils.naver_ocr import process_image_with_ocr
 from services.merge_json import merge_ocr_and_detection_results
 from config.database_config import get_db_connection
 from config.user_config import USER_NAME
+
+def clean_filename(filename: str) -> str:
+    """
+    파일명을 정리하는 함수
+    - 확장자 제거 (.pdf, .png 등)
+    - 끝에 있는 숫자 제거 (예: stream_does_ai_1 -> stream_does_ai, 도면예시1 -> 도면예시)
+    
+    Args:
+        filename: 원본 파일명
+    
+    Returns:
+        str: 정리된 파일명
+    """
+    # 확장자 제거
+    base_name = os.path.splitext(filename)[0]
+    
+    # 끝에 있는 숫자 제거 (언더스코어 유무 관계없이)
+    # 패턴: _숫자 또는 그냥 숫자
+    cleaned_name = re.sub(r'_?\d+$', '', base_name)
+    
+    return cleaned_name
 
 def get_next_testsum_sequence() -> int:
     """다음 testsum 시퀀스 번호를 반환"""
@@ -64,7 +86,8 @@ def convert_uploaded_file_to_images(file_bytes: bytes, original_filename: str) -
             os.makedirs(upload_dir)
         
         file_extension = original_filename.lower().split('.')[-1]
-        base_filename = os.path.splitext(original_filename)[0]
+        # 파일명 정리 (확장자 제거, _숫자 제거)
+        cleaned_filename = clean_filename(original_filename)
         
         if file_extension == 'pdf':
             # PDF 처리
@@ -72,9 +95,9 @@ def convert_uploaded_file_to_images(file_bytes: bytes, original_filename: str) -
                 images = convert_from_bytes(file_bytes, dpi=300)
                 for i, image in enumerate(images):
                     if len(images) > 1:
-                        filename = f"{base_filename}_page_{i+1}.png"
+                        filename = f"{cleaned_filename}_page_{i+1}.png"
                     else:
-                        filename = f"{base_filename}.png"
+                        filename = f"{cleaned_filename}.png"
                     
                     save_path = os.path.join(upload_dir, filename)
                     image.save(save_path, 'PNG')
@@ -94,7 +117,7 @@ def convert_uploaded_file_to_images(file_bytes: bytes, original_filename: str) -
                 if image.mode != 'RGB':
                     image = image.convert('RGB')
                 
-                filename = f"{base_filename}.png"
+                filename = f"{cleaned_filename}.png"
                 save_path = os.path.join(upload_dir, filename)
                 image.save(save_path, 'PNG')
                 result['converted_images'].append(save_path)
@@ -119,12 +142,9 @@ def create_integrated_json(image_path: str, ocr_result: Dict, original_filename:
     }
     
     try:
-        # 업로드된 파일명에서 확장자 제거
+        # 파일명 정리 (확장자 제거, _숫자 제거)
+        clean_filename_for_mapping = clean_filename(original_filename)
         base_filename = os.path.splitext(original_filename)[0]
-        
-        # 매핑용 파일명에서 _숫자 패턴 제거 (예: 도면예시1_3 -> 도면예시1)
-        import re
-        clean_filename_for_mapping = re.sub(r'_\d+$', '', base_filename)
         
         # Detection 결과 파일들을 파일명으로 매핑하여 로드
         detection_dir = 'uploads/detection_results'
@@ -260,8 +280,11 @@ def save_to_database(integrated_data: Dict, image_path: str, original_filename: 
         RETURNING d_id;
         """
         
+        # 데이터베이스에 저장할 때도 정리된 파일명 사용
+        cleaned_db_filename = clean_filename(original_filename)
+        
         cursor.execute(insert_query, (
-            original_filename,
+            cleaned_db_filename,
             USER_NAME,  # config/user_config.py 에서 설정한 사용자 이름 사용
             datetime.now(),
             json.dumps(integrated_data, ensure_ascii=False),
