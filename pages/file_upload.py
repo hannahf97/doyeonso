@@ -1,247 +1,386 @@
 import streamlit as st
 import os
 import time
+import base64
 from utils.auto_processor import process_uploaded_file_auto, get_processing_statistics
 from utils.file_upload_utils import is_allowed_file, validate_file_size, get_file_info
 
+def get_base64_encoded_svg(svg_path):
+    """SVG 파일을 base64로 인코딩"""
+    try:
+        with open(svg_path, "rb") as f:
+            contents = f.read()
+        return base64.b64encode(contents).decode("utf-8")
+    except FileNotFoundError:
+        return None
+
 def show():
-    # 메인 헤더
-    st.title("🚀 자동 파일 처리 시스템")
-    st.markdown("**파일 업로드 → PNG 변환 → OCR → 통합 JSON → 데이터베이스 저장까지 완전 자동화!**")
-    st.markdown("---")
+    # 페이지 스타일링
+    st.markdown("""
+    <style>
     
-    # 통계 정보 표시
-    stats = get_processing_statistics()
+    /* 메인 컨테이너 */
+    .main-container {
+        background: white;
+        border-radius: 20px;
+        padding: 40px;
+        margin: 20px auto;
+        max-width: 1200px;
+        box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+    }
     
-    st.markdown("### 📊 실시간 처리 현황")
+    /* 제목 영역 */
+    .title-section {
+        text-align: center;
+        margin-bottom: 40px;
+    }
     
-    col1, col2, col3, col4 = st.columns(4)
+    .title-korean {
+        font-size: 48px;
+        font-weight: bold;
+        color: #2c3e50;
+        margin-bottom: 10px;
+        font-family: 'Noto Sans KR', sans-serif;
+    }
     
-    with col1:
-        st.metric("📁 총 처리 파일", stats['total_files'])
+    .title-english {
+        font-size: 24px;
+        color: #7f8c8d;
+        font-weight: 300;
+        letter-spacing: 2px;
+    }
     
-    with col2:
-        st.metric("✅ 완료된 통합", stats['total_merged'])
+    /* 업로드 영역 */
+    .upload-area {
+        border: 3px dashed #bdc3c7;
+        border-radius: 15px;
+        padding: 60px 40px;
+        text-align: center;
+        background: #f8f9fa;
+        margin: 30px 0;
+        transition: all 0.3s ease;
+    }
     
-    with col3:
-        st.metric("📅 오늘 처리", stats['today_files'])
+    .upload-area:hover {
+        border-color: #3498db;
+        background: #ecf0f1;
+    }
     
-    with col4:
-        st.metric("📈 성공률", f"{stats['success_rate']:.1f}%")
+    .upload-icon {
+        width: 80px;
+        height: 80px;
+        margin: 0 auto 20px;
+        opacity: 0.6;
+    }
     
-    # 업로드 폴더 생성
-    upload_dirs = [
-        'uploads/uploaded_images',
-        'uploads/ocr_results',
-        'uploads/detection_results',
-        'uploads/merged_results'
-    ]
+    .upload-text {
+        font-size: 24px;
+        color: #2c3e50;
+        margin-bottom: 10px;
+        font-weight: 600;
+    }
     
-    for dir_path in upload_dirs:
-        if not os.path.exists(dir_path):
-            os.makedirs(dir_path)
+    .upload-subtext {
+        font-size: 16px;
+        color: #7f8c8d;
+        margin-bottom: 30px;
+    }
     
-    # 파일 업로드 섹션
-    st.markdown("## 📂 파일 업로드")
+    /* 파일 프레임 */
+    .file-frame {
+        background: white;
+        border-radius: 15px;
+        padding: 25px;
+        margin: 20px 0;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+        border: 1px solid #ecf0f1;
+    }
     
+    .file-frame h4 {
+        color: #2c3e50;
+        margin-bottom: 15px;
+        font-size: 18px;
+    }
+    
+    /* 요약 섹션 */
+    .summary-section {
+        margin-top: 40px;
+        padding: 30px;
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        border-radius: 15px;
+    }
+    
+    .summary-title {
+        font-size: 28px;
+        font-weight: bold;
+        color: #2c3e50;
+        margin-bottom: 20px;
+        text-align: center;
+    }
+    
+    .file-list-item {
+        background: white;
+        padding: 15px 20px;
+        margin: 10px 0;
+        border-radius: 10px;
+        border-left: 4px solid #3498db;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+    
+    .file-list-item.selected {
+        border-left-color: #e74c3c;
+        background: #fff5f5;
+    }
+    
+    /* 테이블 스타일 */
+    .summary-table {
+        background: white;
+        border-radius: 10px;
+        overflow: hidden;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        margin: 20px 0;
+    }
+    
+    .table-header {
+        background: #34495e;
+        color: white;
+        padding: 15px;
+        font-weight: 600;
+        text-align: center;
+    }
+    
+    .table-row {
+        padding: 12px 15px;
+        border-bottom: 1px solid #ecf0f1;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .table-row:hover {
+        background: #f8f9fa;
+    }
+    
+    /* 상태 표시 */
+    .status-uploading {
+        color: #f39c12;
+        font-weight: 600;
+    }
+    
+    .status-completed {
+        color: #27ae60;
+        font-weight: 600;
+    }
+    
+    /* PDF 태그 */
+    .pdf-tag {
+        background: #e74c3c;
+        color: white;
+        padding: 5px 10px;
+        border-radius: 5px;
+        font-size: 12px;
+        font-weight: bold;
+        margin-right: 10px;
+    }
+    
+    /* 반응형 디자인 */
+    @media (max-width: 768px) {
+        .main-container {
+            margin: 10px;
+            padding: 20px;
+        }
+        
+        .title-korean {
+            font-size: 36px;
+        }
+        
+        .upload-area {
+            padding: 40px 20px;
+        }
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # 메인 컨테이너 시작
+    st.markdown('<div class="main-container">', unsafe_allow_html=True)
+    
+    # 제목 섹션
+    st.markdown("""
+    <div class="title-section">
+        <img src="data:image/svg+xml;base64,{}" style="max-width: 400px; height: auto;">
+    </div>
+    """.format(get_base64_encoded_svg("assets/img/file_upload_title.svg") or ""), unsafe_allow_html=True)
+    
+    # 업로드 영역
+    st.markdown("""
+    <div class="upload-area">
+        <div class="upload-icon">
+            <img src="data:image/svg+xml;base64,{}" style="width: 120px; height: 120px;">
+        </div>
+        <div class="upload-text">Choose a file or drag & drop it here</div>
+        <div class="upload-subtext">PDF and Images formats</div>
+    </div>
+    """.format(get_base64_encoded_svg("assets/img/upload_image.svg") or ""), unsafe_allow_html=True)
+    
+    # 파일 업로드 위젯
     uploaded_files = st.file_uploader(
-        "🎯 지원 형식: JPG, PNG, PDF | 최대 10MB",
+        "",
         type=['jpg', 'jpeg', 'png', 'pdf'],
         accept_multiple_files=True,
-        help="파일을 선택하면 자동으로 모든 처리가 시작됩니다!"
+        help="🎯 지원 형식: JPG, PNG, PDF | 최대 10MB",
+        label_visibility="collapsed"
     )
     
+    # 업로드된 파일이 있을 때 처리
     if uploaded_files:
+        # 파일 프레임들 표시
+        col1, col2 = st.columns(2)
+        
         for i, uploaded_file in enumerate(uploaded_files):
-            st.markdown(f"### 📄 {uploaded_file.name}")
-            
+            with col1 if i % 2 == 0 else col2:
+                # 파일 프레임
+                st.markdown(f"""
+                <div class="file-frame">
+                    <h4>Frame {i + 17}</h4>
+                    <div style="display: flex; align-items: center; margin-bottom: 15px;">
+                        <div class="pdf-tag">PDF</div>
+                        <div style="flex: 1;">
+                            <div style="font-weight: 600; color: #2c3e50;">{uploaded_file.name}</div>
+                            <div style="font-size: 12px; color: #7f8c8d;">
+                                {uploaded_file.size // 1024} KB of {uploaded_file.size // 1024} KB • 
+                                <span class="status-completed">✓ Completed</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        # 파일 처리 로직 (백그라운드에서 실행)
+        for i, uploaded_file in enumerate(uploaded_files):
             # 파일 검증
             if not is_allowed_file(uploaded_file.name):
                 st.error("❌ 지원하지 않는 파일 형식입니다.")
                 continue
             
-            # 파일 크기 검증
             file_bytes = uploaded_file.getvalue()
             is_valid_size, size_error = validate_file_size(file_bytes)
             if not is_valid_size:
                 st.error(f"❌ {size_error}")
                 continue
             
-            # 파일 정보 표시
-            file_info = get_file_info(uploaded_file)
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("📦 파일 크기", f"{file_info['size']:.2f} MB")
-            with col2:
-                st.metric("🎨 파일 형식", file_info['type'])
-            with col3:
-                st.metric("📋 파일명", file_info['name'])
-            
-            # 자동 처리 시작
-            progress_placeholder = st.empty()
-            steps_placeholder = st.empty()
-            results_placeholder = st.empty()
-            
-            # 프로그레스 바 초기화
-            progress_bar = progress_placeholder.progress(0)
-            
-            with st.spinner("🔄 자동 처리 시작..."):
-                # 완전 자동화 처리 실행 (이미 읽은 file_bytes 재사용)
+            # 자동 처리 (백그라운드에서 실행)
+            with st.spinner(f"🔄 {uploaded_file.name} 처리 중..."):
                 workflow_result = process_uploaded_file_auto(
                     file_bytes, 
                     uploaded_file.name
                 )
                 
-                # 단계별 진행 상황 표시
-                total_steps = len(workflow_result['steps_completed'])
-                
-                for idx, step in enumerate(workflow_result['steps_completed']):
-                    progress_bar.progress((idx + 1) / max(total_steps, 1))
-                    steps_placeholder.info(step)
-                    time.sleep(0.2)  # 시각적 효과
-                
-                # 최종 결과 표시
                 if workflow_result['success']:
-                    st.balloons()  # 🎉 성공 효과
-                    
-                    results_placeholder.success("🎉 처리 완료! 모든 단계가 성공적으로 완료되었습니다.")
-                    
-                    # 처리 결과 상세 정보
-                    st.markdown("#### 📋 처리 결과 상세")
-                    
-                    if 'processed_images' in workflow_result['results']:
-                        for img_result in workflow_result['results']['processed_images']:
-                            img_name = os.path.basename(img_result['image_path'])
-                            
-                            # 결과 탭
-                            tab1, tab2, tab3 = st.tabs(["🖼️ 이미지 정보", "🔍 OCR 결과", "📊 통합 JSON"])
-                            
-                            with tab1:
-                                st.info(f"💾 저장 경로: `{img_result['image_path']}`")
-                                
-                                # 이미지 표시
-                                if os.path.exists(img_result['image_path']):
-                                    st.image(img_result['image_path'], caption=img_name, width=300)
-                            
-                            with tab2:
-                                if img_result['ocr_result'] and img_result['ocr_result']['success']:
-                                    ocr_data = img_result['ocr_result']
-                                    
-                                    if ocr_data.get('extracted_text'):
-                                        st.text_area(
-                                            "📝 추출된 텍스트",
-                                            value=ocr_data['extracted_text'],
-                                            height=200,
-                                            key=f"ocr_text_{i}_{img_name}"
-                                        )
-                                    
-                                    # OCR 파일 다운로드
-                                    if ocr_data.get('json_path') and os.path.exists(ocr_data['json_path']):
-                                        with open(ocr_data['json_path'], 'r', encoding='utf-8') as f:
-                                            json_content = f.read()
-                                        
-                                        st.download_button(
-                                            label="📥 OCR JSON 다운로드",
-                                            data=json_content,
-                                            file_name=f"ocr_{img_name}.json",
-                                            mime='application/json',
-                                            key=f"download_ocr_{i}_{img_name}"
-                                        )
-                                    
-                                    if ocr_data.get('txt_path') and os.path.exists(ocr_data['txt_path']):
-                                        with open(ocr_data['txt_path'], 'r', encoding='utf-8') as f:
-                                            txt_content = f.read()
-                                        
-                                        st.download_button(
-                                            label="📥 OCR 텍스트 다운로드",
-                                            data=txt_content,
-                                            file_name=f"ocr_{img_name}.txt",
-                                            mime='text/plain',
-                                            key=f"download_txt_{i}_{img_name}"
-                                        )
-                                else:
-                                    st.error("OCR 처리에 실패했습니다.")
-                            
-                            with tab3:
-                                if img_result['integrated_result'] and img_result['integrated_result']['success']:
-                                    integrated_data = img_result['integrated_result']
-                                    
-                                    st.success(f"✅ 통합 JSON 생성: `testsum{integrated_data['sequence']}.json`")
-                                    
-                                    # DB 저장 결과
-                                    if img_result['db_result'] and img_result['db_result']['success']:
-                                        st.success(f"💾 데이터베이스 저장 완료 (ID: {img_result['db_result']['db_id']})")
-                                    
-                                    # 통합 JSON 다운로드
-                                    if integrated_data['merged_path'] and os.path.exists(integrated_data['merged_path']):
-                                        with open(integrated_data['merged_path'], 'r', encoding='utf-8') as f:
-                                            merged_content = f.read()
-                                        
-                                        st.download_button(
-                                            label="📥 통합 JSON 다운로드",
-                                            data=merged_content,
-                                            file_name=f"testsum{integrated_data['sequence']}.json",
-                                            mime='application/json',
-                                            key=f"download_merged_{i}_{img_name}"
-                                        )
-                                        
-                                        # JSON 미리보기
-                                        st.json(integrated_data['integrated_data'])
-                                else:
-                                    st.error("통합 JSON 생성에 실패했습니다.")
-                    
+                    st.success(f"✅ {uploaded_file.name} 처리 완료!")
                 else:
-                    # 오류 처리
-                    results_placeholder.error(f"❌ 처리 실패: {workflow_result.get('error_message', '알 수 없는 오류가 발생했습니다.')}")
-                    
-                    # 완료된 단계 표시
-                    if workflow_result['steps_completed']:
-                        st.markdown("#### 📋 처리된 단계:")
-                        for step in workflow_result['steps_completed']:
-                            st.markdown(f"- {step}")
-            
-            st.markdown("---")
+                    st.error(f"❌ {uploaded_file.name} 처리 실패: {workflow_result.get('error_message', '알 수 없는 오류')}")
     
-    # 파일 목록 섹션
-    st.markdown("---")
-    st.markdown("## 📋 저장된 파일 목록")
+    # QUICK SUMMARY 섹션
+    st.markdown("""
+    <div class="summary-section">
+        <div class="summary-title">QUICK SUMMARY</div>
+    </div>
+    """, unsafe_allow_html=True)
     
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "🖼️ 업로드 이미지", 
-        "🔍 OCR 결과", 
-        "🎯 Detection 결과", 
-        "📊 통합 결과"
-    ])
+    # 파일 리스트와 테이블 템플릿
+    col1, col2, col3 = st.columns([1, 1, 1])
     
-    directories = [
-        ("uploads/uploaded_images", tab1),
-        ("uploads/ocr_results", tab2),
-        ("uploads/detection_results", tab3),
-        ("uploads/merged_results", tab4)
-    ]
+    with col1:
+        st.markdown("""
+        <div class="summary-table">
+            <div class="table-header">FILE LIST</div>
+            <div class="file-list-item selected">
+                <input type="checkbox" checked style="margin-right: 10px;">
+                <span style="color: #3498db; font-weight: 600;">FILE NAME</span>
+            </div>
+            <div class="file-list-item">FILE NAME</div>
+            <div class="file-list-item">FILE NAME</div>
+            <div class="file-list-item">FILE NAME</div>
+            <div class="file-list-item">FILE NAME</div>
+        </div>
+        """, unsafe_allow_html=True)
     
-    for dir_path, tab in directories:
-        with tab:
-            if os.path.exists(dir_path):
-                files = sorted(os.listdir(dir_path))
-                if files:
-                    st.write(f"**총 {len(files)}개 파일**")
-                    for file in files:
-                        file_path = os.path.join(dir_path, file)
-                        file_size = os.path.getsize(file_path) / 1024  # KB
-                        
-                        col1, col2 = st.columns([3, 1])
-                        with col1:
-                            st.write(f"📄 {file}")
-                        with col2:
-                            st.write(f"{file_size:.1f} KB")
-                else:
-                    st.info("📁 파일이 없습니다.")
-            else:
-                st.warning("📁 폴더가 존재하지 않습니다.")
+    with col2:
+        st.markdown("""
+        <div class="summary-table">
+            <div class="table-header">Table Template</div>
+            <div class="table-row">
+                <span><strong>No.</strong></span>
+                <span><strong>ITEM</strong></span>
+                <span><strong>Q'ty</strong></span>
+            </div>
+            <div class="table-row">
+                <span>1</span>
+                <span>GATE VALVE</span>
+                <span>20</span>
+            </div>
+            <div class="table-row">
+                <span>2</span>
+                <span>FLOW CONTROLLER</span>
+                <span>15</span>
+            </div>
+            <div class="table-row">
+                <span>3</span>
+                <span>FLOW VALVE</span>
+                <span>3</span>
+            </div>
+            <div class="table-row">
+                <span>4</span>
+                <span>LEVEL CONTROLLER</span>
+                <span>6</span>
+            </div>
+            <div class="table-row">
+                <span>5</span>
+                <span>LEVEL CONTROLLER</span>
+                <span>2</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     
-
+    with col3:
+        st.markdown("""
+        <div class="summary-table">
+            <div class="table-header">Table Template</div>
+            <div class="table-row">
+                <span><strong>No.</strong></span>
+                <span><strong>ITEM</strong></span>
+                <span><strong>Q'ty</strong></span>
+            </div>
+            <div class="table-row">
+                <span>6</span>
+                <span>GATE VALVE</span>
+                <span>20</span>
+            </div>
+            <div class="table-row">
+                <span>7</span>
+                <span>FLOW CONTROLLER</span>
+                <span>15</span>
+            </div>
+            <div class="table-row">
+                <span>8</span>
+                <span>FLOW VALVE</span>
+                <span>3</span>
+            </div>
+            <div class="table-row">
+                <span>9</span>
+                <span>LEVEL CONTROLLER</span>
+                <span>6</span>
+            </div>
+            <div class="table-row">
+                <span>10</span>
+                <span>LEVEL CONTROLLER</span>
+                <span>2</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # 메인 컨테이너 종료
+    st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     show() 
