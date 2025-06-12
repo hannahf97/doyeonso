@@ -1,45 +1,80 @@
 import streamlit as st
-from streamlit_option_menu import option_menu
-import os
-from dotenv import load_dotenv
+from pages.sidebar import render_sidebar, handle_menu_click
+from pages.home import render_home
+from pages.fileupload import render_fileupload
+from pages.filelist import render_filelist
+from pages.chatbot import render_chatbot
+from pages.help import render_help
 
-# 환경변수 로드
-load_dotenv()
+# 페이지 설정
+st.set_page_config(
+    page_title="POSCO AI Assistant",
+    page_icon="🏭",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
 
-# 페이지 임포트
-from pages import home, file_upload, file_list, chat_bot, help, database_admin
+# 기본 Streamlit 스타일 숨기기
+st.markdown("""
+<style>
+/* Streamlit 기본 요소들 숨기기 */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+
+/* 기본 패딩 제거 */
+.block-container {
+    padding-top: 0rem;
+    padding-bottom: 0rem;
+    padding-left: 0rem;
+    padding-right: 0rem;
+}
+
+/* 사이드바 숨기기 */
+.css-1d391kg {display: none;}
+
+/* 전체 배경 설정 */
+.stApp {
+    background-color: #f8f9fa;
+}
+
+/* 메인 컨테이너 설정 */
+.main .block-container {
+    max-width: none;
+    padding: 0;
+}
+</style>
+""", unsafe_allow_html=True)
 
 def main():
-    st.set_page_config(
-        page_title="Doyeonso",
-        page_icon="🐻",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
+    """메인 애플리케이션 함수"""
     
-    # 사이드바 메뉴
-    with st.sidebar:
-        selected = option_menu(
-            menu_title="Doyeonso",
-            options=["홈", "파일 업로드", "파일 목록", "챗봇", "도움말", "데이터베이스 관리"],
-            icons=["house", "upload", "list", "chat", "question", "database"],
-            menu_icon="bear",
-            default_index=0,
-        )
+    # 세션 상태 초기화
+    if "page_view" not in st.session_state:
+        st.session_state["page_view"] = "home"
     
-    # 페이지 라우팅
-    if selected == "홈":
-        home.show()
-    elif selected == "파일 업로드":
-        file_upload.show()
-    elif selected == "파일 목록":
-        file_list.show()
-    elif selected == "챗봇":
-        chat_bot.show()
-    elif selected == "도움말":
-        help.show()
-    elif selected == "데이터베이스 관리":
-        database_admin.show()
+    # 사이드바 렌더링
+    render_sidebar()
+    
+    # 메뉴 클릭 처리를 위한 숨겨진 버튼들
+    handle_menu_click()
+    
+    # 현재 페이지에 따라 콘텐츠 렌더링
+    current_page = st.session_state.get("page_view", "home")
+    
+    if current_page == "home":
+        render_home()
+    elif current_page == "fileupload":
+        render_fileupload()
+    elif current_page == "filelist":
+        render_filelist()
+    elif current_page == "chatbot":
+        render_chatbot()
+    elif current_page == "help":
+        render_help()
+    else:
+        # 기본값으로 홈 페이지 표시
+        render_home()
 
 if __name__ == "__main__":
     main() 
