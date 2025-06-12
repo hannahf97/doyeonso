@@ -411,45 +411,39 @@ def render_main_content():
     """현재 페이지에 따른 메인 콘텐츠 렌더링"""
     current_page = st.session_state.get("page_view", "home")
     
-    # 현재 페이지 내용
-    if current_page == "home":
-        st.markdown("""
+    try:
+        # 현재 페이지에 따라 해당 파일을 import하고 실행
+        if current_page == "home":
+            from pages import home
+            home.show()
+        elif current_page == "upload":
+            from pages import file_upload
+            file_upload.show()
+        elif current_page == "filelist":
+            from pages import file_list
+            file_list.show()
+        elif current_page == "chatbot":
+            from pages import chat_bot
+            chat_bot.show()
+        elif current_page == "help":
+            from pages import help
+            help.show()
+    except ImportError as e:
+        st.error(f"페이지를 불러올 수 없습니다: {e}")
+        st.markdown(f"""
         <div style="padding: 40px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin: 20px;">
-            <h1 style="color: #357196; margin-bottom: 20px;">🏠 HOME</h1>
-            <p style="font-size: 18px; color: #666;">POSCO AI Assistant에 오신 것을 환영합니다!</p>
-            <p>좌측 사이드바의 메뉴를 클릭하여 다양한 기능을 이용하실 수 있습니다.</p>
+            <h1 style="color: #357196; margin-bottom: 20px;">페이지 로드 오류</h1>
+            <p style="font-size: 18px; color: #666;">{current_page} 페이지를 불러오는 중 오류가 발생했습니다.</p>
+            <p>pages/{current_page}.py 파일이 존재하는지 확인해주세요.</p>
         </div>
         """, unsafe_allow_html=True)
-    elif current_page == "upload":
-        st.markdown("""
+    except Exception as e:
+        st.error(f"페이지 실행 중 오류가 발생했습니다: {e}")
+        st.markdown(f"""
         <div style="padding: 40px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin: 20px;">
-            <h1 style="color: #357196; margin-bottom: 20px;">📁 FILE UPLOAD</h1>
-            <p style="font-size: 18px; color: #666;">파일 업로드 페이지입니다.</p>
-            <p>이곳에서 파일을 업로드하고 관리할 수 있습니다.</p>
-        </div>
-        """, unsafe_allow_html=True)
-    elif current_page == "filelist":
-        st.markdown("""
-        <div style="padding: 40px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin: 20px;">
-            <h1 style="color: #357196; margin-bottom: 20px;">📋 FILE LIST</h1>
-            <p style="font-size: 18px; color: #666;">파일 목록 페이지입니다.</p>
-            <p>업로드된 파일들의 목록을 확인할 수 있습니다.</p>
-        </div>
-        """, unsafe_allow_html=True)
-    elif current_page == "chatbot":
-        st.markdown("""
-        <div style="padding: 40px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin: 20px;">
-            <h1 style="color: #357196; margin-bottom: 20px;">💬 CHAT-BOT</h1>
-            <p style="font-size: 18px; color: #666;">AI 챗봇 페이지입니다.</p>
-            <p>AI와 대화하며 다양한 질문과 답변을 나눌 수 있습니다.</p>
-        </div>
-        """, unsafe_allow_html=True)
-    elif current_page == "help":
-        st.markdown("""
-        <div style="padding: 40px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin: 20px;">
-            <h1 style="color: #357196; margin-bottom: 20px;">❓ HELP</h1>
-            <p style="font-size: 18px; color: #666;">도움말 페이지입니다.</p>
-            <p>애플리케이션 사용법과 FAQ를 확인할 수 있습니다.</p>
+            <h1 style="color: #357196; margin-bottom: 20px;">실행 오류</h1>
+            <p style="font-size: 18px; color: #666;">{current_page} 페이지 실행 중 오류가 발생했습니다.</p>
+            <p>오류 내용: {str(e)}</p>
         </div>
         """, unsafe_allow_html=True)
 
