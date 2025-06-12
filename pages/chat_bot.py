@@ -132,6 +132,9 @@ def show():
         
         if st.button("도면 시각화", key="test_visualization", use_container_width=True):
             _add_test_question("stream_does_ai_1 도면을 시각화해서 분석해줘")
+        
+        if st.button("종합 분석", key="test_comprehensive", use_container_width=True):
+            _add_test_question("stream_does_ai_1 도면을 종합적으로 분석해줘")
     
     st.markdown("---")
     
@@ -285,7 +288,11 @@ def show():
             "debug_info": {
                 "query_type": response_data.get('query_type'),
                 "context_quality": response_data.get('context_quality'),
-                "web_search_used": response_data.get('web_search_used', False)
+                "web_search_used": response_data.get('web_search_used', False),
+                "extracted_text_length": response_data.get('extracted_text_length', 0),
+                "rag_chunks_count": response_data.get('rag_chunks_count', 0),
+                "json_analysis": response_data.get('json_analysis'),
+                "similarity_threshold": response_data.get('similarity_threshold')
             }
         }
         
@@ -524,7 +531,16 @@ def _display_debug_info(debug_info):
     query_type = debug_info.get('query_type', 'N/A')
     
     # 쿼리 타입별 색상 및 아이콘
-    if query_type == "change_analysis":
+    if query_type == "comprehensive_analysis":
+        type_display = "🔬 종합분석"
+        color = "purple"
+    elif query_type == "drawing_visualization":
+        type_display = "🎨 도면시각화"
+        color = "teal"
+    elif query_type == "drawing_search":
+        type_display = "🔍 도면검색"
+        color = "blue"
+    elif query_type == "change_analysis":
         type_display = "🔄 변경분석"
         color = "orange"
     elif query_type == "internal_data":
@@ -565,6 +581,28 @@ def _display_debug_info(debug_info):
             low_count = debug_info.get('low_quality_sources', 0)
             st.metric("📈 소스 품질", f"고품질: {high_count}, 참고: {low_count}")
     
+    # 종합 분석 전용 정보 표시
+    if query_type == "comprehensive_analysis":
+        st.markdown("---")
+        st.markdown("### 🔬 종합 분석 상세 정보")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            extracted_length = debug_info.get('extracted_text_length', 0)
+            st.metric("📝 추출 텍스트", f"{extracted_length}자")
+        
+        with col2:
+            rag_chunks = debug_info.get('rag_chunks_count', 0)
+            st.metric("📖 RAG 청크", f"{rag_chunks}개")
+        
+        with col3:
+            has_visualization = "✅ 포함" if debug_info.get('visualization') else "❌ 없음"
+            st.metric("🎨 시각화", has_visualization)
+        
+        with col4:
+            has_json = "✅ 포함" if debug_info.get('json_analysis') else "❌ 없음"
+            st.metric("📊 JSON 분석", has_json)
+    
     # 추가 세부 정보
     if debug_info.get('similarity_threshold'):
         extra_info = f"🎯 유사도 임계값: {debug_info['similarity_threshold']} | ⏱️ 생성 시간: {datetime.now().strftime('%H:%M:%S')}"
@@ -572,6 +610,8 @@ def _display_debug_info(debug_info):
         # 내부 데이터 타입인 경우 보안 알림 추가
         if query_type == "internal_data":
             extra_info += " | 🔒 보안: RAG 전용"
+        elif query_type == "comprehensive_analysis":
+            extra_info += " | 🔬 통합: RAG+JSON+시각화"
         
         st.caption(extra_info)
 
@@ -612,18 +652,19 @@ def _display_visualization(visualization_data):
         with col2:
             st.markdown("🔴 **빨간색 박스**: AI 감지 객체")
         
-        # 상세 정보
-        with st.expander("📋 상세 분석 정보"):
-            resized_size = visualization_data.get('resized_size', (0, 0))
-            st.write(f"**원본 크기:** {original_size[0]} × {original_size[1]}")
-            st.write(f"**분석 크기:** {resized_size[0]} × {resized_size[1]}")
-            st.write(f"**분석 요약:** {visualization_data.get('analysis_summary', 'N/A')}")
-            
-            # 도면 데이터 정보
-            drawing_data = visualization_data.get('drawing_data', {})
-            if drawing_data:
-                st.write(f"**등록일:** {drawing_data.get('create_date', 'N/A')}")
-                st.write(f"**등록자:** {drawing_data.get('user', 'N/A')}")
+        # 상세 정보 - expander 대신 일반 컨테이너 사용
+        st.markdown("### 📋 상세 분석 정보")
+        
+        resized_size = visualization_data.get('resized_size', (0, 0))
+        st.write(f"**원본 크기:** {original_size[0]} × {original_size[1]}")
+        st.write(f"**분석 크기:** {resized_size[0]} × {resized_size[1]}")
+        st.write(f"**분석 요약:** {visualization_data.get('analysis_summary', 'N/A')}")
+        
+        # 도면 데이터 정보
+        drawing_data = visualization_data.get('drawing_data', {})
+        if drawing_data:
+            st.write(f"**등록일:** {drawing_data.get('create_date', 'N/A')}")
+            st.write(f"**등록자:** {drawing_data.get('user', 'N/A')}")
     else:
         st.error("시각화된 이미지가 없습니다.")
 
