@@ -1,0 +1,214 @@
+{
+    "boxes": [
+        {
+            "id": "1",
+            "label": "flow controller",
+            "x": "177.05",
+            "y": "407.01",
+            "width": "80.77",
+            "height": "80.68",
+            "confidence": null
+        },
+        {
+            "id": "2",
+            "label": "flow controller",
+            "x": "1261.06",
+            "y": "174.48",
+            "width": "82.12",
+            "height": "78.95",
+            "confidence": null
+        },
+        {
+            "id": "3",
+            "label": "flow control valve",
+            "x": "1186.68",
+            "y": "335.85",
+            "width": "112.29",
+            "height": "141.67",
+            "confidence": null
+        },
+        {
+            "id": "4",
+            "label": "flow transmitter",
+            "x": "1149.36",
+            "y": "181.83",
+            "width": "78.72",
+            "height": "78.65",
+            "confidence": null
+        },
+        {
+            "id": "5",
+            "label": "flow transmitter",
+            "x": "420.10",
+            "y": "249.36",
+            "width": "80.20",
+            "height": "73.72",
+            "confidence": null
+        },
+        {
+            "id": "6",
+            "label": "flow control valve",
+            "x": "316.75",
+            "y": "492.20",
+            "width": "143.51",
+            "height": "119.40",
+            "confidence": null
+        },
+        {
+            "id": "7",
+            "label": "heat exchanger",
+            "x": "1149.29",
+            "y": "541.44",
+            "width": "148.57",
+            "height": "77.88",
+            "confidence": null
+        },
+        {
+            "id": "8",
+            "label": "powered valve",
+            "x": "1189.51",
+            "y": "626.04",
+            "width": "144.01",
+            "height": "62.08",
+            "confidence": null
+        },
+        {
+            "id": "9",
+            "label": "powered valve",
+            "x": "448.47",
+            "y": "648.33",
+            "width": "166.93",
+            "height": "66.65",
+            "confidence": null
+        },
+        {
+            "id": "A",
+            "label": "powered valve",
+            "x": "459.77",
+            "y": "468.51",
+            "width": "124.54",
+            "height": "52.02",
+            "confidence": null
+        },
+        {
+            "id": "B",
+            "label": "analysis valve damper",
+            "x": "452.59",
+            "y": "370.38",
+            "width": "115.18",
+            "height": "140.75",
+            "confidence": null
+        },
+        {
+            "id": "C",
+            "label": "analysis convert relay",
+            "x": "665.46",
+            "y": "275.21",
+            "width": "80.93",
+            "height": "80.42",
+            "confidence": null
+        },
+        {
+            "id": "D",
+            "label": "analyzer transmitter",
+            "x": "669.31",
+            "y": "497.08",
+            "width": "78.61",
+            "height": "79.15",
+            "confidence": null
+        },
+        {
+            "id": "E",
+            "label": "analysis control",
+            "x": "544.49",
+            "y": "278.11",
+            "width": "78.97",
+            "height": "76.22",
+            "confidence": null
+        },
+        {
+            "id": "F",
+            "label": "analyzer transmitter",
+            "x": "1051.65",
+            "y": "756.94",
+            "width": "83.29",
+            "height": "78.88",
+            "confidence": null
+        },
+        {
+            "id": "G",
+            "label": "neutralizer",
+            "x": "877.99",
+            "y": "521.36",
+            "width": "285.98",
+            "height": "467.72",
+            "confidence": null
+        },
+        {
+            "id": "H",
+            "label": "static mixer",
+            "x": "505.58",
+            "y": "533.92",
+            "width": "186.16",
+            "height": "47.84",
+            "confidence": null
+        },
+        {
+            "id": "I",
+            "label": "flow transmitter",
+            "x": "179.53",
+            "y": "533.49",
+            "width": "79.05",
+            "height": "76.98",
+            "confidence": null
+        },
+        {
+            "id": "J",
+            "label": "flow transmitter",
+            "x": "499.80",
+            "y": "744.17",
+            "width": "84.61",
+            "height": "88.35",
+            "confidence": null
+        },
+        {
+            "id": "K",
+            "label": "Centrifugal Pump",
+            "x": "953.26",
+            "y": "817.29",
+            "width": "86.52",
+            "height": "64.58",
+            "confidence": null
+        },
+        {
+            "id": "L",
+            "label": "powered valve",
+            "x": "1193.61",
+            "y": "440.43",
+            "width": "137.22",
+            "height": "55.86",
+            "confidence": null
+        },
+        {
+            "id": "M",
+            "label": "flow control valve",
+            "x": "1252.71",
+            "y": "753.48",
+            "width": "140.41",
+            "height": "111.95",
+            "confidence": null
+        },
+        {
+            "id": "N",
+            "label": "analysis control",
+            "x": "1053.16",
+            "y": "184.25",
+            "width": "86.07",
+            "height": "73.71",
+            "confidence": null
+        }
+    ],
+    "height": 1079,
+    "key": "stream_does_ai_3.pdf_page_1.png",
+    "width": 1559
+}

@@ -2,10 +2,10 @@
   "label": "ocr",
   "version": "V2",
   "requestId": "stream_dose_ai_3.png",
-  "timestamp": 1749751202938,
+  "timestamp": 1749767839441,
   "images": [
     {
-      "uid": "3658e9e1f2064b1fb0ae70e390996163",
+      "uid": "832023bd9859444d8600271850bd1873",
       "name": "demo",
       "inferResult": "SUCCESS",
       "message": "SUCCESS",

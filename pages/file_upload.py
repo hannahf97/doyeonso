@@ -333,44 +333,60 @@ def show():
             if 'selected_file' not in st.session_state:
                 st.session_state.selected_file = file_names[0] if file_names else None
             
-            # 파일 리스트를 테이블로 표시
-            file_table_data = []
-            for file_name in file_names:
-                file_table_data.append({
-                    'Select': file_name == st.session_state.selected_file,
-                    'File Name': file_name
-                })
+            # 카드 스타일 추가
+            st.markdown("""
+            <style>
+            .file-card {
+                background: white;
+                border-radius: 10px;
+                padding: 15px;
+                margin: 10px 0;
+                border: 1px solid #e0e0e0;
+                transition: all 0.3s ease;
+                cursor: pointer;
+            }
+            .file-card:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            }
+            .file-card.selected {
+                border: 2px solid #3498db;
+                background: #f0f7ff;
+            }
+            .file-name {
+                font-size: 16px;
+                color: #2c3e50;
+                margin: 0;
+                padding: 5px 0;
+            }
+            .file-checkbox {
+                margin-right: 10px;
+            }
+            </style>
+            """, unsafe_allow_html=True)
             
-            # 파일 선택 테이블 (데이터 크기에 맞춰 자동 조정)
-            table_height = 80 + len(file_table_data) * 40  # 헤더 80px + 각 행 40px
-            selected_df = st.data_editor(
-                file_table_data,
-                column_config={
-                    'Select': st.column_config.CheckboxColumn(
-                        'Select',
-                        help='Select file to analyze',
-                        default=False,
-                        width='small'
-                    ),
-                    'File Name': st.column_config.TextColumn(
-                        'File Name',
-                        help='Uploaded file names',
-                        width='large'
-                    )
-                },
-                hide_index=True,
-                use_container_width=True,
-                height=table_height,  # 데이터 크기에 맞춰 높이 조정
-                key=f'file_selector_{len(file_table_data)}'  # 키를 동적으로 변경
-            )
+            # 카드 컨테이너 생성
+            card_container = st.container()
             
-            # 선택된 파일 업데이트
-            selected_files = [row['File Name'] for row in selected_df if row['Select']]
-            if selected_files:
-                # 가장 마지막에 선택된 파일을 현재 선택으로 설정
-                if selected_files[-1] != st.session_state.selected_file:
-                    st.session_state.selected_file = selected_files[-1]
-                    st.rerun()
+            # 각 파일을 카드로 표시
+            with card_container:
+                for i, file_name in enumerate(file_names):
+                    is_selected = file_name == st.session_state.selected_file
+                    card_class = "file-card selected" if is_selected else "file-card"
+                    
+                    # 카드 클릭 이벤트를 위한 체크박스
+                    col1, col2 = st.columns([1, 20])
+                    with col1:
+                        if st.checkbox("", value=is_selected, key=f"check_{i}"):
+                            if not is_selected:
+                                st.session_state.selected_file = file_name
+                                st.rerun()
+                    with col2:
+                        st.markdown(f"""
+                        <div class="{card_class}" onclick="document.querySelector('#check_{i}').click()">
+                            <p class="file-name">{file_name}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
         else:
             st.warning("No files uploaded yet")
             st.session_state.selected_file = None

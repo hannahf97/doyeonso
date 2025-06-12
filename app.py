@@ -303,7 +303,7 @@ def handle_page_navigation():
         st.markdown("""
         <div style="background-color: #357196; color: white; padding: 16px; border-radius: 8px; text-align: center; margin-top: 20px; width: 100%;">
             <div style="font-weight: bold; font-size: 14px; line-height: 1.4;">
-                USER NAME<br/>
+                제로<br/>
                 SENIOR ASSISTANT
             </div>
         </div>
