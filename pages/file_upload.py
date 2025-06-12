@@ -300,7 +300,23 @@ def show():
     
     # QUICK SUMMARY 섹션
     st.markdown("""
-    <div class="summary-section" style="transform: scale(0.5); margin-left: -1050px;">
+    <style>
+    .quick-summary {
+        transform: scale(0.5);
+        transform-origin: left center;
+        margin-top: 40px;
+        margin-bottom: -20px;
+        padding-left: 0;
+    }
+    .quick-summary .summary-title {
+        font-size: 70px;
+        font-weight: bold;
+        color: #2c3e50;
+        margin-bottom: 0px;
+        text-align: left;
+    }
+    </style>
+    <div class="quick-summary">
         <div class="summary-title">QUICK SUMMARY</div>
     </div>
     """, unsafe_allow_html=True)

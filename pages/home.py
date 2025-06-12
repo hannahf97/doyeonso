@@ -213,64 +213,7 @@ def show():
         }
     }
 
-    /* 테이블 컨테이너 스타일 */
-    .home-table-container {
-        margin-top: 80px;
-        display: flex;
-        justify-content: center;
-        width: 100%;
-        max-width: 100%;
-        box-sizing: border-box;
-    }
     
-    /* 테이블 스타일 - 파일업로드 페이지와 동일 */
-    .home-summary-table {
-        background: white;
-        border-radius: 10px;
-        overflow: hidden;
-        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-        margin: 20px 0;
-        width: 100%;
-        max-width: 736px; /* 버튼 4개 + 간격 너비 (174*4 + 40*3) */
-    }
-    
-    .home-table-header {
-        background: #34495e;
-        color: white;
-        padding: 15px;
-        font-weight: 600;
-        text-align: center;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    
-    .home-table-header > div {
-        flex: 1;
-        text-align: center;
-    }
-    
-    .home-table-row {
-        padding: 12px 15px;
-        border-bottom: 1px solid #ecf0f1;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    
-    .home-table-row > div {
-        flex: 1;
-        text-align: center;
-        padding: 0 10px;
-    }
-    
-    .home-table-row:hover {
-        background: #f8f9fa;
-    }
-    
-    .home-table-row:last-child {
-        border-bottom: none;
-    }
     
     /* 반응형 조정 */
     @media (max-width: 768px) {
@@ -305,6 +248,7 @@ def show():
     # SVG 파일들을 base64로 인코딩
     main_dobi_logo = get_base64_encoded_svg("assets/img/main_dobi.svg")
     title_logo = get_base64_encoded_svg("assets/img/title.svg")
+    table_title = get_base64_encoded_svg("assets/img/tabletitle.svg")
     
     # 버튼 이미지들 base64 인코딩
     fileupload_button = get_base64_encoded_svg("assets/img/main_fileupload_butt.svg")
@@ -412,6 +356,20 @@ def show():
     
     # 테이블 데이터 가져오기
     drawings = get_recent_drawings()
+    
+    # tabletitle.svg 표시
+    if table_title:
+        st.markdown(f"""
+        <div style="text-align: center; margin-top: 60px; margin-bottom: -40px;">
+            <img src="data:image/svg+xml;base64,{table_title}" alt="Table Title" style="height: 40px; max-width: 100%; width: auto;" />
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div style="text-align: center; margin-top: 60px; margin-bottom: -40px;">
+            <div style="height: 40px; color: #357196; font-weight: bold; font-size: 24px;">RECENT DRAWINGS</div>
+        </div>
+        """, unsafe_allow_html=True)
     
     # Streamlit 컬럼을 사용하여 테이블 형태로 만들기
     # 공통 스타일 정의
